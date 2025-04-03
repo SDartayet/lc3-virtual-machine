@@ -133,8 +133,6 @@ impl LC3VM {
             let source_register_2_number = (instruction & 0b111) as usize;
             second_operand = self.general_registers[source_register_2_number];
         } else {
-            // If the first bit of the immediate value is negative, because of how two's complement works, we need to extend it with ones until we have 16 bits to preserve the sign
-            // I check if the first bit of the 5 bit immediate is one, and if it is I extend it with ones, otherwise with zeroes
             let five_bit_immediate = instruction & 0b11111; // I filter the first 5 bits of the instruction, which contain the immediate, and set the rest to zero
             second_operand = extend_sign_for_integer(five_bit_immediate, 5);
         }
