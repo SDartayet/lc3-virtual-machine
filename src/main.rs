@@ -1,5 +1,5 @@
 //The number of memory addresses is 2^16
-const MAX_MEMORY_ADDRESS:u16 = u16::pow(2, 16) - 1;
+const MAX_MEMORY_ADDRESS:u16 = (u32::pow(2, 16) - 1) as u16;
 const REGISTER_COUNT:u8 = 10;
 
 ///The registers the architecture contains.
