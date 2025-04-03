@@ -556,4 +556,15 @@ mod tests {
 
         assert_eq!(vm.program_counter, 2);
     }
+
+    #[test]
+    fn branch_instruction_doesnt_branch_with_no_flags() {
+        let mut vm = LC3VM::new();
+
+        let branch_instruction = (OpCode::OpBR as u16) | (0b001 << 9) | 2;
+
+        vm.branch(branch_instruction);
+
+        assert_eq!(vm.program_counter, 0);
+    }
 }
