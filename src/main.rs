@@ -29,8 +29,11 @@ struct LC3VM {
     condition_flags: [u16; 3],
     memory: [u16; MAX_MEMORY_ADDRESS as usize],
 }
+use Flag::{*}; 
 
 impl LC3VM {
+    
+
     fn new() -> LC3VM {
         LC3VM {
             general_registers: [0; 8],
@@ -45,12 +48,12 @@ impl LC3VM {
     fn update_flags(&mut self, register_number: usize) {
         let register_value = self.general_registers[register_number];
         if register_value == 0 {
-            self.condition_flags[Flag::FlZero] = 1;
+            self.condition_flags[FlZero] = 1;
         } else if register_value & 0b1000000000000000 != 0 {
             //In two's complement, if the first bit is one, the number is negative
-            self.condition_flags[Flag::FlNeg] = 1;
+            self.condition_flags[FlNeg] = 1;
         } else {
-            self.condition_flags[Flag::FlPos] = 1;
+            self.condition_flags[FlPos] = 1;
         }
     }
 
@@ -130,7 +133,7 @@ impl LC3VM {
             let source_register_2_number = (instruction & 0b111) as usize;
             second_operand = self.general_registers[source_register_2_number];
         } else {
-            // If the first bit of the immediate value is negative, because of how two's complement works, we need to extend it with ones unti lwe have 16 bits to preserve the sign
+            // If the first bit of the immediate value is negative, because of how two's complement works, we need to extend it with ones until we have 16 bits to preserve the sign
             // I check if the first bit of the 5 bit immediate is one, and if it is I extend it with ones, otherwise with zeroes
             let five_bit_immediate = instruction & 0b11111; // I filter the first 5 bits of the instruction, which contain the immediate, and set the rest to zero
             let is_immediate_negative = (five_bit_immediate & 0b10000) != 0;
@@ -151,11 +154,31 @@ impl LC3VM {
 
         self.update_flags(destination_register_number);
     }
+
+    fn branch(&mut self, instruction: lc3_instruction) {
+        //The 9 rightmost bits contain the offset I need to jump when the condition is true
+        //ox1FF is 9 bits set to 1
+        let program_counter_offset = instruction & 0x01FF;
+
+        //Starting left, bit 10 is that the condition is the positive flag being up, bit 11 is the zero one being up, and bit 12 the negative one
+        //I shift 9 rightward and and the value with 0b111 to get the value of the three
+        let flag_values =(instruction >> 9) & 0b111;
+        let condition_flag_is_up: bool; 
+        if flag_values == 0 {
+            condition_flag_is_up = false;
+        } else {
+            condition_flag_is_up = self.condition_flags[Flag::from(flag_values)] != 0;
+        }
+        
+        if condition_flag_is_up {
+            self.program_counter += program_counter_offset;
+        }
+    }
 }
 
 /// The opcodes for the instructions the architecture supports
 enum OpCode {
-    OpBR,                 /* branch */
+    OpBR = 0000 << 12,    /* branch */
     OpADD = 0b0001 << 12, /* add  */
     OpLD,                 /* load */
     OpST,                 /* store */
@@ -174,9 +197,10 @@ enum OpCode {
 }
 
 enum Flag {
-    FlPos,  /* Set when the result of the previous operation was positive */
-    FlZero, /* Set when the result of the previous operation was zero */
-    FlNeg,  /* Set when the result of the previous operation was negative */
+    FlPos = 0b001,  /* Set when the result of the previous operation was positive */
+    FlZero = 0b010, /* Set when the result of the previous operation was zero */
+    FlNeg = 0b100,  /* Set when the result of the previous operation was negative */
+    FlNA /* Used for type conversion purposes */
 }
 
 //I implement indexing arrays with flag values to make code more declarative
@@ -184,9 +208,10 @@ impl<T> Index<Flag> for [T] {
     type Output = T;
     fn index(&self, idx: Flag) -> &Self::Output {
         match idx {
-            Flag::FlPos => &self[0],
-            Flag::FlZero => &self[1],
-            Flag::FlNeg => &self[2],
+            FlPos => &self[0],
+            FlZero => &self[1],
+            FlNeg => &self[2],
+            FlNA => &self[3]
         }
     }
 }
@@ -194,9 +219,21 @@ impl<T> Index<Flag> for [T] {
 impl<T> IndexMut<Flag> for [T] {
     fn index_mut(&mut self, idx: Flag) -> &mut Self::Output {
         match idx {
-            Flag::FlPos => &mut self[0],
-            Flag::FlZero => &mut self[1],
-            Flag::FlNeg => &mut self[2],
+            FlPos => &mut self[0],
+            FlZero => &mut self[1],
+            FlNeg => &mut self[2],
+            FlNA => &mut self[3]
+        }
+    }
+}
+
+impl From<u16> for Flag {
+    fn from(item: u16) -> Self {
+        match item {
+            0b1 => FlPos,
+            0b10 => FlZero,
+            0b100 => FlNeg,
+            _ => FlNA
         }
     }
 }
@@ -464,5 +501,59 @@ mod tests {
         vm.not(not_instruction);
 
         assert_eq!(vm.condition_flags[FlPos], 1);
+    }
+    
+    #[test]
+    fn branch_instruction_branches_for_neg() {
+        let mut vm = LC3VM::new();
+
+        vm.general_registers[R1] = 5;
+
+        let add_instruction =
+            (OpCode::OpADD as u16) | ((R2 as u16) << 9) | ((R1 as u16) << 6) | (1 << 5) | 0b11010; // 0b11010 is -6 in two's complement with 5 bits
+
+        vm.add(add_instruction);
+
+        let branch_instruction = (OpCode::OpBR as u16) | (0b100 << 9) | 2;
+
+        vm.branch(branch_instruction);
+
+        assert_eq!(vm.program_counter, 2);
+    }
+
+    #[test]
+    fn branch_instruction_branches_for_zero() {
+        let mut vm = LC3VM::new();
+
+        vm.general_registers[R1] = 6;
+
+        let add_instruction =
+            (OpCode::OpADD as u16) | ((R2 as u16) << 9) | ((R1 as u16) << 6) | (1 << 5) | 0b11010; // 0b11010 is -6 in two's complement with 5 bits
+
+        vm.add(add_instruction);
+
+        let branch_instruction = (OpCode::OpBR as u16) | (0b010 << 9) | 2;
+
+        vm.branch(branch_instruction);
+
+        assert_eq!(vm.program_counter, 2);
+    }
+
+    #[test]
+    fn branch_instruction_branches_for_positive() {
+        let mut vm = LC3VM::new();
+
+        vm.general_registers[R1] = 7;
+
+        let add_instruction =
+            (OpCode::OpADD as u16) | ((R2 as u16) << 9) | ((R1 as u16) << 6) | (1 << 5) | 0b11010; // 0b11010 is -6 in two's complement with 5 bits
+
+        vm.add(add_instruction);
+
+        let branch_instruction = (OpCode::OpBR as u16) | (0b001 << 9) | 2;
+
+        vm.branch(branch_instruction);
+
+        assert_eq!(vm.program_counter, 2);
     }
 }
