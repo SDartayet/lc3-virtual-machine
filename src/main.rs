@@ -23,19 +23,16 @@ enum GeneralPurposeRegister {
     R7 = 7,
 }
 
-fn extend_sign_for_5_bit_integer(five_bit_immediate: u16) -> u16 {
-    // If the first bit of the immediate value is negative, because of how two's complement works, we need to extend it with ones unti lwe have 16 bits to preserve the sign
-    // I check if the first bit of the 5 bit immediate is one, and if it is I extend it with ones, otherwise with zeroes
-    let is_immediate_negative = (five_bit_immediate & 0b10000) != 0;
-    let sign_extension: u16;
-    // If the sign extension is negative, I fill with 11 bits of 1, since 11+5 = 16. Otherwise I fill with zeroes
+fn extend_sign_for_integer(value: u16, value_bit_count: u16) -> u16 {
+    // If the first bit of the value is negative, because of how two's complement works, we need to extend it with ones unti lwe have 16 bits to preserve the sign
+    // I check if the first bit of the value is one, and if it is I extend it with ones, otherwise with zeroes
+    let is_immediate_negative = (value & (1 << value_bit_count - 1)) != 0;
+    // If the sign extension is negative, I fill with 11 bits of 1, since 11+5 = 16. Otherwise I don't need to do anything because the filler would be zeroes
     if is_immediate_negative {
-        sign_extension = 0xFFE0;
-    } else {
-        sign_extension = 0x0000;
-    }
-    // Doing a bitwise or between the sign extension I need and the immediate value I get the immediate with the sign extended
-    sign_extension | five_bit_immediate
+        // Doing a bitwise or between the sign extension I need and the immediate value I get the immediate with the sign extended
+        // The sign extension will be a series of ones left of an amount of zeroes equivalent to the bits of my current value
+        value | (0xFFFF << value_bit_count)
+    } else { value }
 }
 struct LC3VM {
     general_registers: [u16; 8],
@@ -64,7 +61,7 @@ impl LC3VM {
         self.condition_flags = [0;3];
         let register_value = self.general_registers[register_number];
         if register_value == 0 {
-            self.condition_flags[Flag::FlZero] = 1;
+            self.condition_flags[FlZero] = 1;
         } else if register_value & (1 << 15) != 0 {
             //In two's complement, if the first bit is one, the number is negative
             self.condition_flags[FlNeg] = 1;
@@ -93,7 +90,7 @@ impl LC3VM {
             second_operand = self.general_registers[source_register_2_number];
         } else {
             let five_bit_immediate = instruction & 0b11111; // I filter the first 5 bits of the instruction, which contain the immediate, and set the rest to zero
-            second_operand = extend_sign_for_5_bit_integer(five_bit_immediate);
+            second_operand = extend_sign_for_integer(five_bit_immediate, 5);
         }
 
         //Wrapping add lets us recreate the way addition works in two's complement systems while keeping the values unsigned (for more generalization)
@@ -139,7 +136,7 @@ impl LC3VM {
             // If the first bit of the immediate value is negative, because of how two's complement works, we need to extend it with ones until we have 16 bits to preserve the sign
             // I check if the first bit of the 5 bit immediate is one, and if it is I extend it with ones, otherwise with zeroes
             let five_bit_immediate = instruction & 0b11111; // I filter the first 5 bits of the instruction, which contain the immediate, and set the rest to zero
-            second_operand = extend_sign_for_5_bit_integer(five_bit_immediate);
+            second_operand = extend_sign_for_integer(five_bit_immediate, 5);
         }
         self.general_registers[destination_register_number] =
             self.general_registers[source_register_1_number] & second_operand;
@@ -189,7 +186,7 @@ impl LC3VM {
             self.program_counter = self.general_registers[destination_register];
         } else {
             let offset = instruction & 0x7FF; // 0x7FF consists of 11 bits of ones; I want to get the rightmost 11 bits which contain the offset
-            
+            extend_sign_for_integer(offset, 11);
             self.program_counter += offset;
         }
 
@@ -220,9 +217,9 @@ enum OpCode {
 }
 
 enum Flag {
-    FlPos = 0b001,  /* Set when the result of the previous operation was positive */
-    FlZero = 0b010, /* Set when the result of the previous operation was zero */
-    FlNeg = 0b100,  /* Set when the result of the previous operation was negative */
+    FlPos,  /* Set when the result of the previous operation was positive */
+    FlZero, /* Set when the result of the previous operation was zero */
+    FlNeg,  /* Set when the result of the previous operation was negative */
     FlNA /* Used for type conversion purposes */
 }
 
