@@ -32,7 +32,9 @@ fn extend_sign_for_integer(value: u16, value_bit_count: u16) -> u16 {
         // Doing a bitwise or between the sign extension I need and the immediate value I get the immediate with the sign extended
         // The sign extension will be a series of ones left of an amount of zeroes equivalent to the bits of my current value
         value | (0xFFFF << value_bit_count)
-    } else { value }
+    } else {
+        value
+    }
 }
 struct LC3VM {
     general_registers: [u16; 8],
@@ -40,11 +42,9 @@ struct LC3VM {
     condition_flags: [u16; 3],
     memory: [u16; MAX_MEMORY_ADDRESS as usize],
 }
-use Flag::{*}; 
+use Flag::*;
 
 impl LC3VM {
-    
-
     fn new() -> LC3VM {
         LC3VM {
             general_registers: [0; 8],
@@ -58,7 +58,7 @@ impl LC3VM {
     /// Input: the register on which the result was stored
     fn update_flags(&mut self, register_number: usize) {
         //I reset the condition flags first
-        self.condition_flags = [0;3];
+        self.condition_flags = [0; 3];
         let register_value = self.general_registers[register_number];
         if register_value == 0 {
             self.condition_flags[FlZero] = 1;
@@ -151,14 +151,14 @@ impl LC3VM {
 
         //Starting left, bit 10 is that the condition is the positive flag being up, bit 11 is the zero one being up, and bit 12 the negative one
         //I shift 9 rightward and and the value with 0b111 to get the value of the three
-        let flag_values =(instruction >> 9) & 0b111;
-        let condition_flag_is_up: bool; 
+        let flag_values = (instruction >> 9) & 0b111;
+        let condition_flag_is_up: bool;
         if flag_values == 0 {
             condition_flag_is_up = false;
         } else {
             condition_flag_is_up = self.condition_flags[Flag::from(flag_values)] != 0;
         }
-        
+
         if condition_flag_is_up {
             self.program_counter += program_counter_offset;
         }
@@ -218,7 +218,7 @@ enum Flag {
     FlPos,  /* Set when the result of the previous operation was positive */
     FlZero, /* Set when the result of the previous operation was zero */
     FlNeg,  /* Set when the result of the previous operation was negative */
-    FlNA /* Used for type conversion purposes */
+    FlNA,   /* Used for type conversion purposes */
 }
 
 //I implement indexing arrays with flag values to make code more declarative
@@ -229,7 +229,7 @@ impl<T> Index<Flag> for [T] {
             FlPos => &self[0],
             FlZero => &self[1],
             FlNeg => &self[2],
-            FlNA => &self[3]
+            FlNA => &self[3],
         }
     }
 }
@@ -240,7 +240,7 @@ impl<T> IndexMut<Flag> for [T] {
             FlPos => &mut self[0],
             FlZero => &mut self[1],
             FlNeg => &mut self[2],
-            FlNA => &mut self[3]
+            FlNA => &mut self[3],
         }
     }
 }
@@ -251,7 +251,7 @@ impl From<u16> for Flag {
             0b1 => FlPos,
             0b10 => FlZero,
             0b100 => FlNeg,
-            _ => FlNA
+            _ => FlNA,
         }
     }
 }
@@ -520,7 +520,7 @@ mod tests {
 
         assert_eq!(vm.condition_flags[FlPos], 1);
     }
-    
+
     #[test]
     fn branch_instruction_branches_for_neg() {
         let mut vm = LC3VM::new();
