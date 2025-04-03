@@ -186,6 +186,27 @@ impl LC3VM {
         let destination_register = ((instruction >> 6) & 0b111) as usize;
         self.program_counter = self.general_registers[destination_register];
     }
+
+    /// Makes PC jump to the memory address in the register indicated by the instruction or to an offset, depending on the mode
+    /// Instruction structure: OPCODE (4 bits) | Mode (0 for register and 1 for offset, 1 bit) | [00 | Number of the register with the memory address (3 bits) | 000000] in register mode or 11 bit offset in offset mode
+    fn jump_register_or_offset(&mut self, instruction: lc3_instruction) {
+        // I get the 11th bit. If it's zero then I need to use register mode, if it's one I need to use offset mode
+        let is_register_mode = (instruction >> 11) == 0;
+
+        if (is_register_mode) {
+            ///I get the destination register by skipping the filler zeroes and getting the three bits that come after that
+            let destination_register = ((instruction >> 6) & 0b111) as usize;
+            self.program_counter = self.general_registers[destination_register];
+        } else {
+            let offset = instruction & 0x7FF; // 0x7FF consists of 11 bits of ones; I want to get the rightmost 11 bits which contain the offset
+            
+            self.program_counter += offset;
+        }
+
+        ///I get the destination register by skipping the filler zeroes and getting the three bits that come after that
+        let destination_register = ((instruction >> 6) & 0b111) as usize;
+        self.program_counter = self.general_registers[destination_register];
+    }
 }
 
 /// The opcodes for the instructions the architecture supports
@@ -194,7 +215,7 @@ enum OpCode {
     OpADD = 0b0001 << 12, /* add  */
     OpLD,                 /* load */
     OpST,                 /* store */
-    OpJSR,                /* jump register */
+    OpJSR = 0100 << 12,   /* jump register */
     OpAND = 0101 << 12,   /* bitwise and */
     OpLDR,                /* load register */
     OpSTR,                /* store register */
