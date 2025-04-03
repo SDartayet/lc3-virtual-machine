@@ -130,7 +130,21 @@ impl LC3VM {
             let source_register_2_number = (instruction & 0b111) as usize;
             second_operand = self.general_registers[source_register_2_number];
         } else {
-            second_operand = instruction & 0b11111;
+            // If the first bit of the immediate value is negative, because of how two's complement works, we need to extend it with ones unti lwe have 16 bits to preserve the sign
+            // I check if the first bit of the 5 bit immediate is one, and if it is I extend it with ones, otherwise with zeroes
+            let five_bit_immediate = instruction & 0b11111; // I filter the first 5 bits of the instruction, which contain the immediate, and set the rest to zero
+            let is_immediate_negative = (five_bit_immediate & 0b10000) != 0;
+            let sign_extension: u16;
+
+            // If the sign extension is negative, I fill with 11 bits of 1, since 11+5 = 16. Otherwise I fill with zeroes
+            if is_immediate_negative {
+                sign_extension = 0xFFE0;
+            } else {
+                sign_extension = 0x0000;
+            }
+
+            // Doing a bitwise or between the sign extension I need and the immediate value I get the immediate with the sign extended
+            second_operand = sign_extension | five_bit_immediate;
         }
         self.general_registers[destination_register_number] =
             self.general_registers[source_register_1_number] & second_operand;
