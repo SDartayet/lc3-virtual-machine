@@ -46,6 +46,8 @@ impl LC3VM {
     /// Updates the condition flags according to the result of the last arithmetic operations
     /// Input: the register on which the result was stored
     fn update_flags(&mut self, register_number: usize) {
+        //I reset the condition flags first
+        self.condition_flags = [0;3];
         let register_value = self.general_registers[register_number];
         if register_value == 0 {
             self.condition_flags[FlZero] = 1;
@@ -155,6 +157,8 @@ impl LC3VM {
         self.update_flags(destination_register_number);
     }
 
+    /// Jumps a set number of instructions if zero, negative or positive flags are up (depending on encoding)
+    /// Instruction structure: OPCODE (4 bits) | Negative flag (1 bit) | Zero flag (1 bit) | Positive flag (1 bit) | Offset from current PC value to which to jump (9 bits)
     fn branch(&mut self, instruction: lc3_instruction) {
         //The 9 rightmost bits contain the offset I need to jump when the condition is true
         //ox1FF is 9 bits set to 1
@@ -174,6 +178,14 @@ impl LC3VM {
             self.program_counter += program_counter_offset;
         }
     }
+
+    /// Makes PC jump to the memory address in the register indicated by the instruction
+    /// Instruction structure: OPCODE (4 bits) | 000 | Number of the register with the memory address (3 bits) | 000000
+    fn jump(&mut self, instruction: lc3_instruction) {
+        ///I get the destination register by skipping the filler zeroes and getting the three bits that come after that
+        let destination_register = ((instruction >> 6) & 0b111) as usize;
+        self.program_counter = self.general_registers[destination_register];
+    }
 }
 
 /// The opcodes for the instructions the architecture supports
@@ -190,7 +202,7 @@ enum OpCode {
     OpNOT,                /* bitwise not */
     OpLDI,                /* load indirect */
     OpSTI,                /* store indirect */
-    OpJMP,                /* jump */
+    OpJMP = 1100 << 12,   /* jump */
     OpRES,                /* reserved (unused) */
     OpLEA,                /* load effective address */
     OpTRAP,               /* execute trap */
@@ -566,5 +578,18 @@ mod tests {
         vm.branch(branch_instruction);
 
         assert_eq!(vm.program_counter, 0);
+    }
+
+    #[test]
+    fn jump_instruction_works_correctly() {
+        let mut vm = LC3VM::new();
+
+        vm.general_registers[R2] = 2;
+
+        let jump_instruction = (OpCode::OpJMP as u16) | (0b000 << 9) | ((R2 as u16) << 6);
+
+        vm.jump(jump_instruction);
+
+        assert_eq!(vm.program_counter, 2);
     }
 }
