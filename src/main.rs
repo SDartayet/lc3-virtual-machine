@@ -1,6 +1,5 @@
 use std::{
-    ops::{BitAnd, BitOr, BitOrAssign, Index, IndexMut, Shl},
-    slice::SliceIndex,
+    io::{stdout, Write}, ops::{BitAnd, BitOr, BitOrAssign, Index, IndexMut, Shl}, slice::SliceIndex, sync::Arc
 };
 
 //The number of memory addresses is 2^16
@@ -22,6 +21,15 @@ enum GeneralPurposeRegister {
     R6 = 6,
     R7 = 7,
 }
+enum TrapCode {
+    TrapGETC = 0x20,  /* get character from keyboard, not echoed onto the terminal */
+    TrapOUT = 0x21,   /* output a character */
+    TrapPUTS = 0x22,  /* output a word string */
+    TrapIN = 0x23,    /* get character from keyboard, echoed onto the terminal */
+    TrapPUTSP = 0x24, /* output a byte string */
+    TrapHALT = 0x25,   /* halt the program */
+    TrapConversionError
+}
 
 fn extend_sign_for_integer(value: u16, value_bit_count: u16) -> u16 {
     // If the first bit of the value is negative, because of how two's complement works, we need to extend it with ones unti lwe have 16 bits to preserve the sign
@@ -41,9 +49,11 @@ struct LC3VM {
     program_counter: u16,
     condition_flags: u16,
     memory: [u16; MAX_MEMORY_ADDRESS as usize],
+    running: bool
 }
 use Flag::*;
 use GeneralPurposeRegister::*;
+use TrapCode::*;
 
 impl LC3VM {
     fn new() -> LC3VM {
@@ -52,6 +62,7 @@ impl LC3VM {
             program_counter: 0,
             condition_flags: 0,
             memory: [0; MAX_MEMORY_ADDRESS as usize],
+            running: true
         }
     }
 
@@ -254,6 +265,32 @@ impl LC3VM {
         self.memory[self.memory[(self.program_counter + offset) as usize] as usize] =
             self.general_registers[source_register as usize];
     }
+
+    /// Executes a trap routine
+    /// The code for the trap rooutine is in the last 8 bits of the instruction
+    fn execute_trap_routine(&mut self, instruction: lc3_instruction) {
+        let trap_code = TrapCode::from(instruction & 0xFF) ;
+        match trap_code {
+            TrapPUTS => { self.puts(); },
+            TrapHALT => { self.halt(); },
+            _ => {}
+        }
+    }
+
+    fn puts(&self) {
+        let mut character_to_output = (self.memory[self.general_registers[R0] as usize] & 0xFF) as u8 as char;
+        let mut offset: usize = 0;
+        while character_to_output != char::from(0x0) {
+            print!("{}", character_to_output);
+            offset += 1;
+            character_to_output = (self.memory[self.general_registers[R0] as usize + offset] & 0xFF) as u8 as char;
+        }
+        stdout().flush();
+    }
+
+    fn halt(&mut self) {
+        self.running = false;
+    }
 }
 
 /// The opcodes for the instructions the architecture supports
@@ -273,13 +310,27 @@ enum OpCode {
     OpJMP = 1100 << 12,   /* jump */
     OpRES,                /* reserved (unused) */
     OpLEA,                /* load effective address */
-    OpTRAP,               /* execute trap */
+    OpTRAP = 1111 << 12,  /* execute trap */
 }
 
 enum Flag {
     FlPos = 0b001,  /* Set when the result of the previous operation was positive */
     FlZero = 0b010, /* Set when the result of the previous operation was zero */
     FlNeg = 0b100,  /* Set when the result of the previous operation was negative */
+}
+
+impl From<u16> for TrapCode {
+    fn from(value: u16) -> Self {
+        match value {
+            0x20 => TrapGETC,
+            0x21 => TrapOUT,
+            0x22 => TrapPUTS,
+            0x23 => TrapIN,
+            0x24 => TrapPUTSP,
+            0x25 => TrapHALT,
+            _ => TrapConversionError
+        }
+    }
 }
 
 impl BitAnd<Flag> for u16 {
@@ -831,5 +882,35 @@ mod tests {
         vm.store_indirect(store_instruction);
 
         assert_eq!(vm.memory[42], 42);
+    }
+
+    #[test]
+    fn puts_displays_string_correctly() {
+        let mut vm = LC3VM::new();
+
+        vm.general_registers[R0] = 40;
+        vm.memory[40] = 'T' as u16;
+        vm.memory[41] = 'e' as u16;
+        vm.memory[42] = 's' as u16;
+        vm.memory[43] = 't' as u16;
+        vm.memory[44] = '_' as u16;
+        vm.memory[45] = 'O' as u16;
+        vm.memory[46] = 'K' as u16;
+
+
+        let trap_puts_instruction = OpCode::OpTRAP as u16 | TrapPUTS as u16;
+
+        vm.execute_trap_routine(trap_puts_instruction);
+    }
+
+    #[test]
+    fn halt_stops_execution() {
+        let mut vm = LC3VM::new();
+
+        let trap_halt_instruction = OpCode::OpTRAP as u16 | TrapHALT as u16;
+
+        vm.execute_trap_routine(trap_halt_instruction);
+
+        assert!(!vm.running);
     }
 }
