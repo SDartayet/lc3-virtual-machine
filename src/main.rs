@@ -26,7 +26,7 @@ enum GeneralPurposeRegister {
 fn extend_sign_for_integer(value: u16, value_bit_count: u16) -> u16 {
     // If the first bit of the value is negative, because of how two's complement works, we need to extend it with ones unti lwe have 16 bits to preserve the sign
     // I check if the first bit of the value is one, and if it is I extend it with ones, otherwise with zeroes
-    let is_immediate_negative = (value & (1 << value_bit_count - 1)) != 0;
+    let is_immediate_negative = (value & (1 << (value_bit_count - 1))) != 0;
     // If the sign extension is negative, I fill with 11 bits of 1, since 11+5 = 16. Otherwise I don't need to do anything because the filler would be zeroes
     if is_immediate_negative {
         // Doing a bitwise or between the sign extension I need and the immediate value I get the immediate with the sign extended
@@ -191,21 +191,56 @@ impl LC3VM {
             self.program_counter += offset;
         }
     }
+
+    /// Loads a value from memory into a register. The address is an offset from the program counter
+    /// Structure: Opcode (4 bits) | Destination register number (3 bits) | Offset from program counter to be loaded from memory (9 bits)
+    fn load(&mut self, instruction: lc3_instruction) {
+        //I "push" the bits for the register number to the rightmost position, and make all the other bits 0 by doing a bitwise AND with 0b111
+        let destination_register = (instruction >> 9) & 0b111;
+        let offset = extend_sign_for_integer(instruction & 0x1FF, 9);
+        self.general_registers[destination_register as usize] =
+            self.memory[(self.program_counter.wrapping_add(offset)) as usize];
+        self.update_flags(destination_register as usize);
+    }
+
+    /// Loads a value from memory into a register. The address is an offset from a register dictated by the instruction
+    /// Structure: Opcode (4 bits) | Destination register number (3 bits) | Register with base address (3 bits) | Offset from source register to be loaded from memory (6 bits)
+    fn load_register(&mut self, instruction: lc3_instruction) {
+        //I "push" the bits for the register number to the rightmost position, and make all the other bits 0 by doing a bitwise AND with 0b111
+        let destination_register = (instruction >> 9) & 0b111;
+        let source_address_register = (instruction >> 6) & 0b111;
+        let offset = extend_sign_for_integer(instruction & 0b111111, 6);
+        self.general_registers[destination_register as usize] =
+            self.memory[(self.general_registers[source_address_register as usize]
+                .wrapping_add(offset)) as usize];
+        self.update_flags(destination_register as usize);
+    }
+
+    /// Loads a value into a register. The address is an offset from from the program counter
+    /// Structure: Opcode (4 bits) | Destination register number (3 bits) | Offset to be loaded from (9 bits)
+    fn load_address(&mut self, instruction: lc3_instruction) {
+        //I "push" the bits for the register number to the rightmost position, and make all the other bits 0 by doing a bitwise AND with 0b111
+        let destination_register = (instruction >> 9) & 0b111;
+        let offset = extend_sign_for_integer(instruction & 0b111111111, 9);
+        self.general_registers[destination_register as usize] =
+            self.program_counter.wrapping_add(offset);
+        self.update_flags(destination_register as usize);
+    }
 }
 
 /// The opcodes for the instructions the architecture supports
 enum OpCode {
     OpBR = 0000 << 12,    /* branch */
     OpADD = 0b0001 << 12, /* add  */
-    OpLD,                 /* load */
+    OpLD = 0b0010 << 12,  /* load */
     OpST,                 /* store */
     OpJSR = 0100 << 12,   /* jump register */
     OpAND = 0101 << 12,   /* bitwise and */
-    OpLDR,                /* load register */
+    OpLDR = 0110 << 12,   /* load register */
     OpSTR,                /* store register */
     OpRTI,                /* unused */
     OpNOT,                /* bitwise not */
-    OpLDI,                /* load indirect */
+    OpLDI = 1010 << 12,   /* load indirect */
     OpSTI,                /* store indirect */
     OpJMP = 1100 << 12,   /* jump */
     OpRES,                /* reserved (unused) */
@@ -648,5 +683,148 @@ mod tests {
 
         assert_eq!(vm.program_counter, 2);
         assert_eq!(vm.general_registers[R7], 10);
+    }
+
+    #[test]
+    fn load_works_correctly() {
+        let mut vm = LC3VM::new();
+
+        vm.memory[42] = 42;
+        vm.program_counter = 10;
+
+        let load_instruction = (OpCode::OpLD as u16) | ((R0 as u16) << 9) | 32;
+
+        vm.load(load_instruction);
+
+        assert_eq!(vm.program_counter, 10);
+        assert_eq!(vm.general_registers[R0], 42);
+    }
+
+    #[test]
+    fn load_register_works_correctly() {
+        let mut vm = LC3VM::new();
+
+        vm.memory[42] = 42;
+        vm.program_counter = 10;
+        vm.general_registers[R1] = 11;
+
+        let load_register_instruction =
+            (OpCode::OpLDR as u16) | ((R0 as u16) << 9) | ((R1 as u16) << 6) | 31;
+
+        vm.load_register(load_register_instruction);
+
+        assert_eq!(vm.program_counter, 10);
+        assert_eq!(vm.general_registers[R0], 42);
+    }
+
+    #[test]
+    fn load_address_works_correctly() {
+        let mut vm = LC3VM::new();
+
+        vm.program_counter = 10;
+
+        let load_address_instruction = (OpCode::OpLDI as u16) | ((R0 as u16) << 9) | 32;
+
+        vm.load_address(load_address_instruction);
+
+        assert_eq!(vm.program_counter, 10);
+        assert_eq!(vm.general_registers[R0], 42);
+    }
+
+    #[test]
+    fn load_updates_flags() {
+        let mut vm = LC3VM::new();
+
+        vm.memory[42] = 42;
+        vm.program_counter = 10;
+
+        let load_instruction = (OpCode::OpLD as u16) | ((R0 as u16) << 9) | 32;
+
+        vm.load(load_instruction);
+
+        assert!(vm.condition_flags & FlPos != 0);
+
+        vm.memory[42] = 0;
+        vm.program_counter = 10;
+
+        let load_instruction = (OpCode::OpLD as u16) | ((R0 as u16) << 9) | 32;
+
+        vm.load(load_instruction);
+
+        assert!(vm.condition_flags & FlZero != 0);
+
+        vm.memory[42] = 0xF000;
+        vm.program_counter = 10;
+
+        let load_instruction = (OpCode::OpLD as u16) | ((R0 as u16) << 9) | 32;
+
+        vm.load(load_instruction);
+
+        assert!(vm.condition_flags & FlNeg != 0);
+    }
+
+    #[test]
+    fn load_register_updates_flags() {
+        let mut vm = LC3VM::new();
+
+        vm.memory[42] = 42;
+        vm.program_counter = 10;
+        vm.general_registers[R1] = 11;
+
+        let load_register_instruction =
+            (OpCode::OpLDR as u16) | ((R0 as u16) << 9) | ((R1 as u16) << 6) | 31;
+
+        vm.load_register(load_register_instruction);
+
+        assert!(vm.condition_flags & FlPos != 0);
+
+        vm.memory[42] = 0xF000;
+        vm.program_counter = 10;
+        vm.general_registers[R1] = 11;
+
+        let load_register_instruction =
+            (OpCode::OpLDR as u16) | ((R0 as u16) << 9) | ((R1 as u16) << 6) | 31;
+
+        vm.load_register(load_register_instruction);
+
+        assert!(vm.condition_flags & FlNeg != 0);
+
+        vm.memory[42] = 0;
+        vm.program_counter = 10;
+
+        let load_instruction = (OpCode::OpLD as u16) | ((R0 as u16) << 9) | 32;
+
+        vm.load(load_instruction);
+
+        assert!(vm.condition_flags & FlZero != 0);
+    }
+
+    #[test]
+    fn load_address_updates_flags() {
+        let mut vm = LC3VM::new();
+
+        vm.program_counter = 10;
+
+        let load_address_instruction = (OpCode::OpLDI as u16) | ((R0 as u16) << 9) | 32;
+
+        vm.load_address(load_address_instruction);
+
+        assert!(vm.condition_flags & FlPos != 0);
+
+        vm.program_counter = 5;
+
+        let load_address_instruction = (OpCode::OpLDI as u16) | ((R0 as u16) << 9) | 0b111111010; // 0b111111010 is -6 in two's complement with 9 bits
+
+        vm.load_address(load_address_instruction);
+
+        assert!(vm.condition_flags & FlNeg != 0);
+
+        vm.program_counter = 6;
+
+        let load_address_instruction = (OpCode::OpLDI as u16) | ((R0 as u16) << 9) | 0b111111010; // 0b11010 is -6 in two's complement with 9 bits
+
+        vm.load_address(load_address_instruction);
+
+        assert!(vm.condition_flags & FlZero != 0);
     }
 }
