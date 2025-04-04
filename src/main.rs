@@ -199,7 +199,7 @@ impl LC3VM {
         let destination_register = (instruction >> 9) & 0b111;
         let offset = extend_sign_for_integer(instruction & 0x1FF, 9);
         self.general_registers[destination_register as usize] =
-            self.memory[(self.program_counter + offset) as usize];
+            self.memory[(self.program_counter.wrapping_add(offset)) as usize];
     }
 
     /// Loads a value from memory into a register. The address is an offset from a register dictated by the instruction
@@ -209,8 +209,9 @@ impl LC3VM {
         let destination_register = (instruction >> 9) & 0b111;
         let source_address_register = (instruction >> 6) & 0b111;
         let offset = extend_sign_for_integer(instruction & 0b111111, 6);
-        self.general_registers[destination_register as usize] = self.memory
-            [(self.general_registers[source_address_register as usize] + offset) as usize];
+        self.general_registers[destination_register as usize] =
+            self.memory[(self.general_registers[source_address_register as usize]
+                .wrapping_add(offset)) as usize];
     }
 
     /// Loads a value into a register. The address is an offset from from the program counter
@@ -230,7 +231,7 @@ impl LC3VM {
         //I "push" the bits for the register number to the rightmost position, and make all the other bits 0 by doing a bitwise AND with 0b111
         let source_register = (instruction >> 9) & 0b111;
         let offset = extend_sign_for_integer(instruction & 0x1FF, 9);
-        self.memory[(self.program_counter + offset) as usize] =
+        self.memory[(self.program_counter.wrapping_add(offset)) as usize] =
             self.general_registers[source_register as usize];
     }
 
@@ -241,8 +242,8 @@ impl LC3VM {
         let source_register = (instruction >> 9) & 0b111;
         let base_address_register = (instruction >> 6) & 0b111;
         let offset = extend_sign_for_integer(instruction & 0b111111, 6);
-        self.memory[(self.general_registers[base_address_register as usize] + offset) as usize] =
-            self.general_registers[source_register as usize];
+        self.memory[(self.general_registers[base_address_register as usize].wrapping_add(offset))
+            as usize] = self.general_registers[source_register as usize];
     }
 
     /// Stores an value from a register into the address pointed to by an address in memory, itself pointed to by the program counter + an offset
@@ -251,7 +252,7 @@ impl LC3VM {
         //I "push" the bits for the register number to the rightmost position, and make all the other bits 0 by doing a bitwise AND with 0b111
         let source_register = (instruction >> 9) & 0b111;
         let offset = extend_sign_for_integer(instruction & 0b111111111, 9);
-        self.memory[self.memory[(self.program_counter + offset) as usize] as usize] =
+        self.memory[self.memory[(self.program_counter.wrapping_add(offset)) as usize] as usize] =
             self.general_registers[source_register as usize];
     }
 }
