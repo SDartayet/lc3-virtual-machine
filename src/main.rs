@@ -213,14 +213,14 @@ impl LC3VM {
             [(self.general_registers[source_address_register as usize] + offset) as usize];
     }
 
-    /// Loads a value from memory into a register. The address is an offset from a register dictated by the instruction
+    /// Loads a value into a register. The address is an offset from from the program counter
     /// Structure: Opcode (4 bits) | Destination register number (3 bits) | Offset to be loaded from (9 bits)
     fn load_address(&mut self, instruction: lc3_instruction) {
         //I "push" the bits for the register number to the rightmost position, and make all the other bits 0 by doing a bitwise AND with 0b111
         let destination_register = (instruction >> 9) & 0b111;
         let offset = extend_sign_for_integer(instruction & 0b111111111, 9);
         self.general_registers[destination_register as usize] =
-            self.program_counter.wrapping_add(offset);
+        self.program_counter.wrapping_add(offset);
         self.update_flags(destination_register as usize);
     }
 }
