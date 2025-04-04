@@ -1,5 +1,8 @@
 use std::{
-    io::{stdin, stdout, Read, Write}, ops::{BitAnd, BitOr, BitOrAssign, Index, IndexMut, Shl}, slice::SliceIndex, sync::Arc
+    io::{Read, Write, stdin, stdout},
+    ops::{BitAnd, BitOr, BitOrAssign, Index, IndexMut, Shl},
+    slice::SliceIndex,
+    sync::Arc,
 };
 
 //The number of memory addresses is 2^16
@@ -27,8 +30,8 @@ enum TrapCode {
     TrapPUTS = 0x22,  /* output a word string */
     TrapIN = 0x23,    /* get character from keyboard, echoed onto the terminal */
     TrapPUTSP = 0x24, /* output a byte string */
-    TrapHALT = 0x25,   /* halt the program */
-    TrapConversionError
+    TrapHALT = 0x25,  /* halt the program */
+    TrapConversionError,
 }
 
 fn extend_sign_for_integer(value: u16, value_bit_count: u16) -> u16 {
@@ -49,7 +52,7 @@ struct LC3VM {
     program_counter: u16,
     condition_flags: u16,
     memory: [u16; MAX_MEMORY_ADDRESS as usize],
-    running: bool
+    running: bool,
 }
 use Flag::*;
 use GeneralPurposeRegister::*;
@@ -62,7 +65,7 @@ impl LC3VM {
             program_counter: 0,
             condition_flags: 0,
             memory: [0; MAX_MEMORY_ADDRESS as usize],
-            running: true
+            running: true,
         }
     }
 
@@ -269,24 +272,39 @@ impl LC3VM {
     /// Executes a trap routine
     /// The code for the trap rooutine is in the last 8 bits of the instruction
     fn execute_trap_routine(&mut self, instruction: lc3_instruction) {
-        let trap_code = TrapCode::from(instruction & 0xFF) ;
+        let trap_code = TrapCode::from(instruction & 0xFF);
         match trap_code {
-            TrapPUTS => { self.puts(); },
-            TrapHALT => { self.halt(); },
-            TrapOUT => { self.out(); },
-            TrapIN => { self.trap_in(); }
-            TrapGETC => { self.get_character(); },
+            TrapPUTS => {
+                self.puts();
+            }
+            TrapHALT => {
+                self.halt();
+            }
+            TrapOUT => {
+                self.out();
+            }
+            TrapIN => {
+                self.trap_in();
+            }
+            TrapGETC => {
+                self.get_character();
+            }
+            TrapPUTSP => {
+                self.output_char8();
+            }
             _ => {}
         }
     }
 
     fn puts(&self) {
-        let mut character_to_output = (self.memory[self.general_registers[R0] as usize] & 0xFF) as u8 as char;
+        let mut character_to_output =
+            (self.memory[self.general_registers[R0] as usize] & 0xFF) as u8 as char;
         let mut offset: usize = 0;
         while character_to_output != char::from(0x0) {
             print!("{}", character_to_output);
             offset += 1;
-            character_to_output = (self.memory[self.general_registers[R0] as usize + offset] & 0xFF) as u8 as char;
+            character_to_output =
+                (self.memory[self.general_registers[R0] as usize + offset] & 0xFF) as u8 as char;
         }
         stdout().flush();
     }
@@ -301,7 +319,7 @@ impl LC3VM {
     }
 
     fn trap_in(&mut self) {
-        let mut character = [0;1];
+        let mut character = [0; 1];
         stdin().read_exact(&mut character);
         print!("{}", character[0]);
         stdout().flush();
@@ -310,11 +328,34 @@ impl LC3VM {
     }
 
     fn get_character(&mut self) {
-        let mut character = [0;1];
+        let mut character = [0; 1];
         stdin().read_exact(&mut character);
         self.general_registers[R0] = character[0] as u16;
     }
 
+    fn output_char8(&mut self) {
+        let mut current_memory_value = self.memory[self.general_registers[R0] as usize];
+
+        let mut character_to_output = (current_memory_value & 0xFF) as u8 as char;
+
+        if character_to_output != char::from(0x0) {
+            print!("{}", character_to_output);
+            character_to_output = ((current_memory_value >> 8) & 0xFF) as u8 as char;
+            let mut offset: usize = 1;
+            while character_to_output != char::from(0x0) {
+                print!("{}", character_to_output);
+                current_memory_value = self.memory[self.general_registers[R0] as usize + offset];
+                character_to_output = (current_memory_value & 0xFF) as u8 as char;
+                if character_to_output == char::from(0x0) {
+                    break;
+                }
+                print!("{}", character_to_output);
+                offset += 1;
+                character_to_output = ((current_memory_value >> 8) & 0xFF) as u8 as char;
+            }
+        }
+        stdout().flush();
+    }
 }
 
 /// The opcodes for the instructions the architecture supports
@@ -352,7 +393,7 @@ impl From<u16> for TrapCode {
             0x23 => TrapIN,
             0x24 => TrapPUTSP,
             0x25 => TrapHALT,
-            _ => TrapConversionError
+            _ => TrapConversionError,
         }
     }
 }
@@ -921,7 +962,6 @@ mod tests {
         vm.memory[45] = 'O' as u16;
         vm.memory[46] = 'K' as u16;
 
-
         let trap_puts_instruction = OpCode::OpTRAP as u16 | TrapPUTS as u16;
 
         vm.execute_trap_routine(trap_puts_instruction);
@@ -995,5 +1035,18 @@ mod tests {
         assert_eq!(vm.general_registers[R0], 'R' as u16);
     } */
 
+    #[test]
+    fn putsp_displays_string_correctly() {
+        let mut vm = LC3VM::new();
 
+        vm.general_registers[R0] = 40;
+        vm.memory[40] = 'T' as u16 | (('e' as u16) << 8);
+        vm.memory[41] = 's' as u16 | (('t' as u16) << 8);
+        vm.memory[42] = '_' as u16 | (('O' as u16) << 8);
+        vm.memory[43] = 'K' as u16;
+
+        let trap_putsp_instruction = OpCode::OpTRAP as u16 | TrapPUTSP as u16;
+
+        vm.execute_trap_routine(trap_putsp_instruction);
+    }
 }
