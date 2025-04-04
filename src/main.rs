@@ -296,6 +296,8 @@ impl LC3VM {
         }
     }
 
+    /// Outputs a string of characters, each one in a memory location
+    /// Starts reading string from the address pointed to by R0, and stops when it encounters a null character
     fn puts(&self) {
         let mut character_to_output =
             (self.memory[self.general_registers[R0] as usize] & 0xFF) as u8 as char;
@@ -309,15 +311,18 @@ impl LC3VM {
         stdout().flush();
     }
 
+    /// Halts execution of the virtual machine, by changing running bit to zero
     fn halt(&mut self) {
         self.running = false;
     }
 
+    /// Prints a single character, the address for which is contained in R0
     fn out(&mut self) {
         print!("{}", (self.general_registers[R0] & 0xFF) as u8 as char);
         stdout().flush();
     }
 
+    /// Takes a single character from stdin, prints it out on console and stores it in R0
     fn trap_in(&mut self) {
         let mut character = [0; 1];
         stdin().read_exact(&mut character);
@@ -327,12 +332,15 @@ impl LC3VM {
         self.update_flags(R0 as usize);
     }
 
+    /// Takes a single character from stdin, and stores it in R0
     fn get_character(&mut self) {
         let mut character = [0; 1];
         stdin().read_exact(&mut character);
         self.general_registers[R0] = character[0] as u16;
     }
 
+    /// Output a string of characters, each represented as 8 bits, two per memory address
+    /// Starts reading string from the address pointed to by R0, and stops when it encounters a null characte
     fn output_char8(&mut self) {
         let mut current_memory_value = self.memory[self.general_registers[R0] as usize];
 
