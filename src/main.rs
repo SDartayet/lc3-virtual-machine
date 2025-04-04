@@ -220,8 +220,39 @@ impl LC3VM {
         let destination_register = (instruction >> 9) & 0b111;
         let offset = extend_sign_for_integer(instruction & 0b111111111, 9);
         self.general_registers[destination_register as usize] =
-        self.program_counter.wrapping_add(offset);
+            self.program_counter.wrapping_add(offset);
         self.update_flags(destination_register as usize);
+    }
+
+    /// Stores a value into memory from a register. The address is an offset from the program counter
+    /// Structure: Opcode (4 bits) | Source register number (3 bits) | Offset from program counter to be loaded into memory (9 bits)
+    fn store(&mut self, instruction: lc3_instruction) {
+        //I "push" the bits for the register number to the rightmost position, and make all the other bits 0 by doing a bitwise AND with 0b111
+        let source_register = (instruction >> 9) & 0b111;
+        let offset = extend_sign_for_integer(instruction & 0x1FF, 9);
+        self.memory[(self.program_counter + offset) as usize] =
+            self.general_registers[source_register as usize];
+    }
+
+    /// Stores a value into memory from a register. The address is an offset from a register dictated by the instruction
+    /// Structure: Opcode (4 bits) | Source register number (3 bits) | Register with base address (3 bits) | Offset from base register to be loaded into memory (6 bits)
+    fn store_register(&mut self, instruction: lc3_instruction) {
+        //I "push" the bits for the register number to the rightmost position, and make all the other bits 0 by doing a bitwise AND with 0b111
+        let source_register = (instruction >> 9) & 0b111;
+        let base_address_register = (instruction >> 6) & 0b111;
+        let offset = extend_sign_for_integer(instruction & 0b111111, 6);
+        self.memory[(self.general_registers[base_address_register as usize] + offset) as usize] =
+            self.general_registers[source_register as usize];
+    }
+
+    /// Stores an value from a register into the address pointed to by an address in memory, itself pointed to by the program counter + an offset
+    /// Structure: Opcode (4 bits) | Source register (3 bits) | Offset of address from which to fetch destination (9 bits)
+    fn store_indirect(&mut self, instruction: lc3_instruction) {
+        //I "push" the bits for the register number to the rightmost position, and make all the other bits 0 by doing a bitwise AND with 0b111
+        let source_register = (instruction >> 9) & 0b111;
+        let offset = extend_sign_for_integer(instruction & 0b111111111, 9);
+        self.memory[self.memory[(self.program_counter + offset) as usize] as usize] =
+            self.general_registers[source_register as usize];
     }
 }
 
@@ -230,15 +261,15 @@ enum OpCode {
     OpBR = 0000 << 12,    /* branch */
     OpADD = 0b0001 << 12, /* add  */
     OpLD = 0b0010 << 12,  /* load */
-    OpST,                 /* store */
+    OpST = 0011 << 12,    /* store */
     OpJSR = 0100 << 12,   /* jump register */
     OpAND = 0101 << 12,   /* bitwise and */
     OpLDR = 0110 << 12,   /* load register */
-    OpSTR,                /* store register */
+    OpSTR = 0111 << 12,   /* store register */
     OpRTI,                /* unused */
     OpNOT,                /* bitwise not */
     OpLDI = 1010 << 12,   /* load indirect */
-    OpSTI,                /* store indirect */
+    OpSTI = 1011 << 12,   /* store indirect */
     OpJMP = 1100 << 12,   /* jump */
     OpRES,                /* reserved (unused) */
     OpLEA,                /* load effective address */
@@ -755,5 +786,50 @@ mod tests {
         vm.load_address(load_address_instruction);
 
         assert!(vm.condition_flags & FlZero != 0);
+    }
+
+    #[test]
+    fn store_works_correctly() {
+        let mut vm = LC3VM::new();
+
+        vm.general_registers[R0] = 42;
+        vm.program_counter = 10;
+
+        let store_instruction = (OpCode::OpST as u16) | ((R0 as u16) << 9) | 32;
+
+        vm.store(store_instruction);
+
+        assert_eq!(vm.program_counter, 10);
+        assert_eq!(vm.memory[42], 42);
+    }
+
+    #[test]
+    fn store_register_works_correctly() {
+        let mut vm = LC3VM::new();
+
+        vm.general_registers[R0] = 42;
+        vm.general_registers[R1] = 11;
+
+        let store_instruction =
+            (OpCode::OpST as u16) | ((R0 as u16) << 9) | ((R1 as u16) << 6) | 31;
+
+        vm.store_register(store_instruction);
+
+        assert_eq!(vm.memory[42], 42);
+    }
+
+    #[test]
+    fn store_indirect_works_correctly() {
+        let mut vm = LC3VM::new();
+
+        vm.general_registers[R0] = 42;
+        vm.program_counter = 10;
+        vm.memory[20] = 42;
+
+        let store_instruction = (OpCode::OpST as u16) | ((R0 as u16) << 9) | 10;
+
+        vm.store_indirect(store_instruction);
+
+        assert_eq!(vm.memory[42], 42);
     }
 }
