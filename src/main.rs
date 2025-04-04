@@ -424,7 +424,6 @@ mod tests {
         vm.and(and_instruction);
 
         assert!(vm.condition_flags & FlNeg != 0);
-
     }
 
     #[test]
@@ -562,6 +561,42 @@ mod tests {
     }
 
     #[test]
+    fn branch_instruction_branches_for_positive_or_zero() {
+        let mut vm = LC3VM::new();
+
+        vm.general_registers[R1] = 7;
+
+        let add_instruction =
+            (OpCode::OpADD as u16) | ((R2 as u16) << 9) | ((R1 as u16) << 6) | (1 << 5) | 0b11010; // 0b11010 is -6 in two's complement with 5 bits
+
+        vm.add(add_instruction);
+
+        let branch_instruction = (OpCode::OpBR as u16) | (0b011 << 9) | 2;
+
+        vm.branch(branch_instruction);
+
+        assert_eq!(vm.program_counter, 2);
+    }
+
+    #[test]
+    fn branch_instruction_branches_for_negative_or_zero() {
+        let mut vm = LC3VM::new();
+
+        vm.general_registers[R1] = 5;
+
+        let add_instruction =
+            (OpCode::OpADD as u16) | ((R2 as u16) << 9) | ((R1 as u16) << 6) | (1 << 5) | 0b11010; // 0b11010 is -6 in two's complement with 5 bits
+
+        vm.add(add_instruction);
+
+        let branch_instruction = (OpCode::OpBR as u16) | (0b101 << 9) | 2;
+
+        vm.branch(branch_instruction);
+
+        assert_eq!(vm.program_counter, 2);
+    }
+
+    #[test]
     fn branch_instruction_doesnt_branch_with_no_flags() {
         let mut vm = LC3VM::new();
 
@@ -590,7 +625,7 @@ mod tests {
         let mut vm = LC3VM::new();
 
         vm.general_registers[R2] = 2;
-        vm.program_counter= 10;
+        vm.program_counter = 10;
 
         let jump_instruction = (OpCode::OpJSR as u16) | (0b1 << 11) | 15;
 
@@ -605,7 +640,7 @@ mod tests {
         let mut vm = LC3VM::new();
 
         vm.general_registers[R2] = 2;
-        vm.program_counter= 10;
+        vm.program_counter = 10;
 
         let jump_instruction = (OpCode::OpJSR as u16) | ((R2 as u16) << 6);
 
