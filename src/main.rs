@@ -1,5 +1,5 @@
 use std::{
-    ops::{Index, IndexMut, Shl},
+    ops::{BitAnd, BitOr, BitOrAssign, Index, IndexMut, Shl},
     slice::SliceIndex,
 };
 
@@ -39,7 +39,7 @@ fn extend_sign_for_integer(value: u16, value_bit_count: u16) -> u16 {
 struct LC3VM {
     general_registers: [u16; 8],
     program_counter: u16,
-    condition_flags: [u16; 3],
+    condition_flags: u16,
     memory: [u16; MAX_MEMORY_ADDRESS as usize],
 }
 use Flag::*;
@@ -50,7 +50,7 @@ impl LC3VM {
         LC3VM {
             general_registers: [0; 8],
             program_counter: 0,
-            condition_flags: [0; 3],
+            condition_flags: 0,
             memory: [0; MAX_MEMORY_ADDRESS as usize],
         }
     }
@@ -59,15 +59,15 @@ impl LC3VM {
     /// Input: the register on which the result was stored
     fn update_flags(&mut self, register_number: usize) {
         //I reset the condition flags first
-        self.condition_flags = [0; 3];
+        self.condition_flags = 0;
         let register_value = self.general_registers[register_number];
         if register_value == 0 {
-            self.condition_flags[FlZero] = 1;
+            self.condition_flags |= FlZero;
         } else if register_value & (1 << 15) != 0 {
             //In two's complement, if the first bit is one, the number is negative
-            self.condition_flags[FlNeg] = 1;
+            self.condition_flags |= FlNeg;
         } else {
-            self.condition_flags[FlPos] = 1;
+            self.condition_flags |= FlPos;
         }
     }
 
@@ -157,7 +157,7 @@ impl LC3VM {
         if flag_values == 0 {
             condition_flag_is_up = false;
         } else {
-            condition_flag_is_up = self.condition_flags[Flag::from(flag_values)] != 0;
+            condition_flag_is_up = self.condition_flags & flag_values != 0;
         }
 
         if condition_flag_is_up {
@@ -214,44 +214,30 @@ enum OpCode {
 }
 
 enum Flag {
-    FlPos,  /* Set when the result of the previous operation was positive */
-    FlZero, /* Set when the result of the previous operation was zero */
-    FlNeg,  /* Set when the result of the previous operation was negative */
-    FlNA,   /* Used for type conversion purposes */
+    FlPos = 0b001,  /* Set when the result of the previous operation was positive */
+    FlZero = 0b010, /* Set when the result of the previous operation was zero */
+    FlNeg = 0b100,  /* Set when the result of the previous operation was negative */
 }
 
-//I implement indexing arrays with flag values to make code more declarative
-impl<T> Index<Flag> for [T] {
-    type Output = T;
-    fn index(&self, idx: Flag) -> &Self::Output {
-        match idx {
-            FlPos => &self[0],
-            FlZero => &self[1],
-            FlNeg => &self[2],
-            FlNA => &self[3],
-        }
+impl BitAnd<Flag> for u16 {
+    type Output = u16;
+
+    fn bitand(self, condition_flag: Flag) -> Self::Output {
+        self & condition_flag as u16
     }
 }
 
-impl<T> IndexMut<Flag> for [T] {
-    fn index_mut(&mut self, idx: Flag) -> &mut Self::Output {
-        match idx {
-            FlPos => &mut self[0],
-            FlZero => &mut self[1],
-            FlNeg => &mut self[2],
-            FlNA => &mut self[3],
-        }
+impl BitOr<Flag> for u16 {
+    type Output = u16;
+
+    fn bitor(self, condition_flag: Flag) -> Self::Output {
+        self | condition_flag as u16
     }
 }
 
-impl From<u16> for Flag {
-    fn from(item: u16) -> Self {
-        match item {
-            0b1 => FlPos,
-            0b10 => FlZero,
-            0b100 => FlNeg,
-            _ => FlNA,
-        }
+impl BitOrAssign<Flag> for u16 {
+    fn bitor_assign(&mut self, condition_flag: Flag) {
+        *self = *self | condition_flag as u16;
     }
 }
 
@@ -366,7 +352,7 @@ mod tests {
 
         vm.add(add_instruction);
 
-        assert_eq!(vm.condition_flags[FlNeg], 1);
+        assert!(vm.condition_flags & FlNeg != 0);
     }
 
     #[test]
@@ -380,7 +366,7 @@ mod tests {
 
         vm.add(add_instruction);
 
-        assert_eq!(vm.condition_flags[FlZero], 1);
+        assert!(vm.condition_flags & FlZero != 0);
     }
 
     #[test]
@@ -394,7 +380,7 @@ mod tests {
 
         vm.add(add_instruction);
 
-        assert_eq!(vm.condition_flags[FlPos], 1);
+        assert!(vm.condition_flags & FlPos != 0);
     }
 
     #[test]
@@ -437,7 +423,8 @@ mod tests {
 
         vm.and(and_instruction);
 
-        assert_eq!(vm.condition_flags[FlNeg], 1);
+        assert!(vm.condition_flags & FlNeg != 0);
+
     }
 
     #[test]
@@ -451,7 +438,7 @@ mod tests {
 
         vm.and(and_instruction);
 
-        assert_eq!(vm.condition_flags[FlZero], 1);
+        assert!(vm.condition_flags & FlZero != 0);
     }
 
     #[test]
@@ -465,7 +452,7 @@ mod tests {
 
         vm.and(and_instruction);
 
-        assert_eq!(vm.condition_flags[FlPos], 1);
+        assert!(vm.condition_flags & FlPos != 0);
     }
 
     #[test]
@@ -491,7 +478,7 @@ mod tests {
 
         vm.not(not_instruction);
 
-        assert_eq!(vm.condition_flags[FlNeg], 1);
+        assert!(vm.condition_flags & FlNeg != 0);
     }
 
     #[test]
@@ -504,7 +491,7 @@ mod tests {
 
         vm.not(not_instruction);
 
-        assert_eq!(vm.condition_flags[FlZero], 1);
+        assert!(vm.condition_flags & FlZero != 0);
     }
 
     #[test]
@@ -517,7 +504,7 @@ mod tests {
 
         vm.not(not_instruction);
 
-        assert_eq!(vm.condition_flags[FlPos], 1);
+        assert!(vm.condition_flags & FlPos != 0);
     }
 
     #[test]
