@@ -1,5 +1,5 @@
 use std::{
-    ops::{Index, IndexMut, Shl},
+    ops::{BitAnd, BitOr, BitOrAssign, Index, IndexMut, Shl},
     slice::SliceIndex,
 };
 
@@ -23,33 +23,34 @@ enum GeneralPurposeRegister {
     R7 = 7,
 }
 
-fn extend_sign_for_5_bit_integer(five_bit_immediate: u16) -> u16 {
-    // If the first bit of the immediate value is negative, because of how two's complement works, we need to extend it with ones unti lwe have 16 bits to preserve the sign
-    // I check if the first bit of the 5 bit immediate is one, and if it is I extend it with ones, otherwise with zeroes
-    let is_immediate_negative = (five_bit_immediate & 0b10000) != 0;
-    let sign_extension: u16;
-    // If the sign extension is negative, I fill with 11 bits of 1, since 11+5 = 16. Otherwise I fill with zeroes
+fn extend_sign_for_integer(value: u16, value_bit_count: u16) -> u16 {
+    // If the first bit of the value is negative, because of how two's complement works, we need to extend it with ones unti lwe have 16 bits to preserve the sign
+    // I check if the first bit of the value is one, and if it is I extend it with ones, otherwise with zeroes
+    let is_immediate_negative = (value & (1 << value_bit_count - 1)) != 0;
+    // If the sign extension is negative, I fill with 11 bits of 1, since 11+5 = 16. Otherwise I don't need to do anything because the filler would be zeroes
     if is_immediate_negative {
-        sign_extension = 0xFFE0;
+        // Doing a bitwise or between the sign extension I need and the immediate value I get the immediate with the sign extended
+        // The sign extension will be a series of ones left of an amount of zeroes equivalent to the bits of my current value
+        value | (0xFFFF << value_bit_count)
     } else {
-        sign_extension = 0x0000;
+        value
     }
-    // Doing a bitwise or between the sign extension I need and the immediate value I get the immediate with the sign extended
-    sign_extension | five_bit_immediate
 }
 struct LC3VM {
     general_registers: [u16; 8],
     program_counter: u16,
-    condition_flags: [u16; 3],
+    condition_flags: u16,
     memory: [u16; MAX_MEMORY_ADDRESS as usize],
 }
+use Flag::*;
+use GeneralPurposeRegister::*;
 
 impl LC3VM {
     fn new() -> LC3VM {
         LC3VM {
             general_registers: [0; 8],
             program_counter: 0,
-            condition_flags: [0; 3],
+            condition_flags: 0,
             memory: [0; MAX_MEMORY_ADDRESS as usize],
         }
     }
@@ -57,14 +58,16 @@ impl LC3VM {
     /// Updates the condition flags according to the result of the last arithmetic operations
     /// Input: the register on which the result was stored
     fn update_flags(&mut self, register_number: usize) {
+        //I reset the condition flags first
+        self.condition_flags = 0;
         let register_value = self.general_registers[register_number];
         if register_value == 0 {
-            self.condition_flags[Flag::FlZero] = 1;
+            self.condition_flags |= FlZero;
         } else if register_value & (1 << 15) != 0 {
             //In two's complement, if the first bit is one, the number is negative
-            self.condition_flags[Flag::FlNeg] = 1;
+            self.condition_flags |= FlNeg;
         } else {
-            self.condition_flags[Flag::FlPos] = 1;
+            self.condition_flags |= FlPos;
         }
     }
 
@@ -88,7 +91,7 @@ impl LC3VM {
             second_operand = self.general_registers[source_register_2_number];
         } else {
             let five_bit_immediate = instruction & 0b11111; // I filter the first 5 bits of the instruction, which contain the immediate, and set the rest to zero
-            second_operand = extend_sign_for_5_bit_integer(five_bit_immediate);
+            second_operand = extend_sign_for_integer(five_bit_immediate, 5);
         }
 
         //Wrapping add lets us recreate the way addition works in two's complement systems while keeping the values unsigned (for more generalization)
@@ -132,22 +135,71 @@ impl LC3VM {
             second_operand = self.general_registers[source_register_2_number];
         } else {
             let five_bit_immediate = instruction & 0b11111; // I filter the first 5 bits of the instruction, which contain the immediate, and set the rest to zero
-            second_operand = extend_sign_for_5_bit_integer(five_bit_immediate);
+            second_operand = extend_sign_for_integer(five_bit_immediate, 5);
         }
         self.general_registers[destination_register_number] =
             self.general_registers[source_register_1_number] & second_operand;
 
         self.update_flags(destination_register_number);
     }
+
+    /// Jumps a set number of instructions if zero, negative or positive flags are up (depending on encoding)
+    /// Instruction structure: OPCODE (4 bits) | Negative flag (1 bit) | Zero flag (1 bit) | Positive flag (1 bit) | Offset from current PC value to which to jump (9 bits)
+    fn branch(&mut self, instruction: lc3_instruction) {
+        //The 9 rightmost bits contain the offset I need to jump when the condition is true
+        //ox1FF is 9 bits set to 1
+        let program_counter_offset = instruction & 0x01FF;
+
+        //Starting left, bit 10 is that the condition is the positive flag being up, bit 11 is the zero one being up, and bit 12 the negative one
+        //I shift 9 rightward and and the value with 0b111 to get the value of the three
+        let flag_values = (instruction >> 9) & 0b111;
+        let condition_flag_is_up: bool;
+        if flag_values == 0 {
+            condition_flag_is_up = false;
+        } else {
+            condition_flag_is_up = self.condition_flags & flag_values != 0;
+        }
+
+        if condition_flag_is_up {
+            self.program_counter += program_counter_offset;
+        }
+    }
+
+    /// Makes PC jump to the memory address in the register indicated by the instruction
+    /// Instruction structure: OPCODE (4 bits) | 000 | Number of the register with the memory address (3 bits) | 000000
+    fn jump(&mut self, instruction: lc3_instruction) {
+        ///I get the destination register by skipping the filler zeroes and getting the three bits that come after that
+        let destination_register = ((instruction >> 6) & 0b111) as usize;
+        self.program_counter = self.general_registers[destination_register];
+    }
+
+    /// Makes PC jump to the memory address in the register indicated by the instruction or to an offset, depending on the mode
+    /// Instruction structure: OPCODE (4 bits) | Mode (0 for register and 1 for offset, 1 bit) | [00 | Number of the register with the memory address (3 bits) | 000000] in register mode or 11 bit offset in offset mode
+    fn jump_register_or_offset(&mut self, instruction: lc3_instruction) {
+        // I get the 11th bit. If it's zero then I need to use register mode, if it's one I need to use offset mode
+        let is_register_mode = ((instruction >> 11) & 1) == 0;
+
+        self.general_registers[R7] = self.program_counter;
+
+        if (is_register_mode) {
+            ///I get the destination register by skipping the filler zeroes and getting the three bits that come after that
+            let destination_register = ((instruction >> 6) & 0b111) as usize;
+            self.program_counter = self.general_registers[destination_register];
+        } else {
+            let offset = instruction & 0x7FF; // 0x7FF consists of 11 bits of ones; I want to get the rightmost 11 bits which contain the offset
+            extend_sign_for_integer(offset, 11);
+            self.program_counter += offset;
+        }
+    }
 }
 
 /// The opcodes for the instructions the architecture supports
 enum OpCode {
-    OpBR,                 /* branch */
+    OpBR = 0000 << 12,    /* branch */
     OpADD = 0b0001 << 12, /* add  */
     OpLD,                 /* load */
     OpST,                 /* store */
-    OpJSR,                /* jump register */
+    OpJSR = 0100 << 12,   /* jump register */
     OpAND = 0101 << 12,   /* bitwise and */
     OpLDR,                /* load register */
     OpSTR,                /* store register */
@@ -155,37 +207,37 @@ enum OpCode {
     OpNOT,                /* bitwise not */
     OpLDI,                /* load indirect */
     OpSTI,                /* store indirect */
-    OpJMP,                /* jump */
+    OpJMP = 1100 << 12,   /* jump */
     OpRES,                /* reserved (unused) */
     OpLEA,                /* load effective address */
     OpTRAP,               /* execute trap */
 }
 
 enum Flag {
-    FlPos,  /* Set when the result of the previous operation was positive */
-    FlZero, /* Set when the result of the previous operation was zero */
-    FlNeg,  /* Set when the result of the previous operation was negative */
+    FlPos = 0b001,  /* Set when the result of the previous operation was positive */
+    FlZero = 0b010, /* Set when the result of the previous operation was zero */
+    FlNeg = 0b100,  /* Set when the result of the previous operation was negative */
 }
 
-//I implement indexing arrays with flag values to make code more declarative
-impl<T> Index<Flag> for [T] {
-    type Output = T;
-    fn index(&self, idx: Flag) -> &Self::Output {
-        match idx {
-            Flag::FlPos => &self[0],
-            Flag::FlZero => &self[1],
-            Flag::FlNeg => &self[2],
-        }
+impl BitAnd<Flag> for u16 {
+    type Output = u16;
+
+    fn bitand(self, condition_flag: Flag) -> Self::Output {
+        self & condition_flag as u16
     }
 }
 
-impl<T> IndexMut<Flag> for [T] {
-    fn index_mut(&mut self, idx: Flag) -> &mut Self::Output {
-        match idx {
-            Flag::FlPos => &mut self[0],
-            Flag::FlZero => &mut self[1],
-            Flag::FlNeg => &mut self[2],
-        }
+impl BitOr<Flag> for u16 {
+    type Output = u16;
+
+    fn bitor(self, condition_flag: Flag) -> Self::Output {
+        self | condition_flag as u16
+    }
+}
+
+impl BitOrAssign<Flag> for u16 {
+    fn bitor_assign(&mut self, condition_flag: Flag) {
+        *self = *self | condition_flag as u16;
     }
 }
 
@@ -300,7 +352,7 @@ mod tests {
 
         vm.add(add_instruction);
 
-        assert_eq!(vm.condition_flags[FlNeg], 1);
+        assert!(vm.condition_flags & FlNeg != 0);
     }
 
     #[test]
@@ -314,7 +366,7 @@ mod tests {
 
         vm.add(add_instruction);
 
-        assert_eq!(vm.condition_flags[FlZero], 1);
+        assert!(vm.condition_flags & FlZero != 0);
     }
 
     #[test]
@@ -328,7 +380,7 @@ mod tests {
 
         vm.add(add_instruction);
 
-        assert_eq!(vm.condition_flags[FlPos], 1);
+        assert!(vm.condition_flags & FlPos != 0);
     }
 
     #[test]
@@ -371,7 +423,7 @@ mod tests {
 
         vm.and(and_instruction);
 
-        assert_eq!(vm.condition_flags[FlNeg], 1);
+        assert!(vm.condition_flags & FlNeg != 0);
     }
 
     #[test]
@@ -385,7 +437,7 @@ mod tests {
 
         vm.and(and_instruction);
 
-        assert_eq!(vm.condition_flags[FlZero], 1);
+        assert!(vm.condition_flags & FlZero != 0);
     }
 
     #[test]
@@ -399,7 +451,7 @@ mod tests {
 
         vm.and(and_instruction);
 
-        assert_eq!(vm.condition_flags[FlPos], 1);
+        assert!(vm.condition_flags & FlPos != 0);
     }
 
     #[test]
@@ -425,7 +477,7 @@ mod tests {
 
         vm.not(not_instruction);
 
-        assert_eq!(vm.condition_flags[FlNeg], 1);
+        assert!(vm.condition_flags & FlNeg != 0);
     }
 
     #[test]
@@ -438,7 +490,7 @@ mod tests {
 
         vm.not(not_instruction);
 
-        assert_eq!(vm.condition_flags[FlZero], 1);
+        assert!(vm.condition_flags & FlZero != 0);
     }
 
     #[test]
@@ -451,6 +503,150 @@ mod tests {
 
         vm.not(not_instruction);
 
-        assert_eq!(vm.condition_flags[FlPos], 1);
+        assert!(vm.condition_flags & FlPos != 0);
+    }
+
+    #[test]
+    fn branch_instruction_branches_for_neg() {
+        let mut vm = LC3VM::new();
+
+        vm.general_registers[R1] = 5;
+
+        let add_instruction =
+            (OpCode::OpADD as u16) | ((R2 as u16) << 9) | ((R1 as u16) << 6) | (1 << 5) | 0b11010; // 0b11010 is -6 in two's complement with 5 bits
+
+        vm.add(add_instruction);
+
+        let branch_instruction = (OpCode::OpBR as u16) | (0b100 << 9) | 2;
+
+        vm.branch(branch_instruction);
+
+        assert_eq!(vm.program_counter, 2);
+    }
+
+    #[test]
+    fn branch_instruction_branches_for_zero() {
+        let mut vm = LC3VM::new();
+
+        vm.general_registers[R1] = 6;
+
+        let add_instruction =
+            (OpCode::OpADD as u16) | ((R2 as u16) << 9) | ((R1 as u16) << 6) | (1 << 5) | 0b11010; // 0b11010 is -6 in two's complement with 5 bits
+
+        vm.add(add_instruction);
+
+        let branch_instruction = (OpCode::OpBR as u16) | (0b010 << 9) | 2;
+
+        vm.branch(branch_instruction);
+
+        assert_eq!(vm.program_counter, 2);
+    }
+
+    #[test]
+    fn branch_instruction_branches_for_positive() {
+        let mut vm = LC3VM::new();
+
+        vm.general_registers[R1] = 7;
+
+        let add_instruction =
+            (OpCode::OpADD as u16) | ((R2 as u16) << 9) | ((R1 as u16) << 6) | (1 << 5) | 0b11010; // 0b11010 is -6 in two's complement with 5 bits
+
+        vm.add(add_instruction);
+
+        let branch_instruction = (OpCode::OpBR as u16) | (0b001 << 9) | 2;
+
+        vm.branch(branch_instruction);
+
+        assert_eq!(vm.program_counter, 2);
+    }
+
+    #[test]
+    fn branch_instruction_branches_for_positive_or_zero() {
+        let mut vm = LC3VM::new();
+
+        vm.general_registers[R1] = 7;
+
+        let add_instruction =
+            (OpCode::OpADD as u16) | ((R2 as u16) << 9) | ((R1 as u16) << 6) | (1 << 5) | 0b11010; // 0b11010 is -6 in two's complement with 5 bits
+
+        vm.add(add_instruction);
+
+        let branch_instruction = (OpCode::OpBR as u16) | (0b011 << 9) | 2;
+
+        vm.branch(branch_instruction);
+
+        assert_eq!(vm.program_counter, 2);
+    }
+
+    #[test]
+    fn branch_instruction_branches_for_negative_or_zero() {
+        let mut vm = LC3VM::new();
+
+        vm.general_registers[R1] = 5;
+
+        let add_instruction =
+            (OpCode::OpADD as u16) | ((R2 as u16) << 9) | ((R1 as u16) << 6) | (1 << 5) | 0b11010; // 0b11010 is -6 in two's complement with 5 bits
+
+        vm.add(add_instruction);
+
+        let branch_instruction = (OpCode::OpBR as u16) | (0b101 << 9) | 2;
+
+        vm.branch(branch_instruction);
+
+        assert_eq!(vm.program_counter, 2);
+    }
+
+    #[test]
+    fn branch_instruction_doesnt_branch_with_no_flags() {
+        let mut vm = LC3VM::new();
+
+        let branch_instruction = (OpCode::OpBR as u16) | (0b001 << 9) | 2;
+
+        vm.branch(branch_instruction);
+
+        assert_eq!(vm.program_counter, 0);
+    }
+
+    #[test]
+    fn jump_instruction_works_correctly() {
+        let mut vm = LC3VM::new();
+
+        vm.general_registers[R2] = 2;
+
+        let jump_instruction = (OpCode::OpJMP as u16) | (0b000 << 9) | ((R2 as u16) << 6);
+
+        vm.jump(jump_instruction);
+
+        assert_eq!(vm.program_counter, 2);
+    }
+
+    #[test]
+    fn jsr_works_correctly_for_offset_mode() {
+        let mut vm = LC3VM::new();
+
+        vm.general_registers[R2] = 2;
+        vm.program_counter = 10;
+
+        let jump_instruction = (OpCode::OpJSR as u16) | (0b1 << 11) | 15;
+
+        vm.jump_register_or_offset(jump_instruction);
+
+        assert_eq!(vm.program_counter, 25);
+        assert_eq!(vm.general_registers[R7], 10);
+    }
+
+    #[test]
+    fn jsr_works_correctly_for_register_mode() {
+        let mut vm = LC3VM::new();
+
+        vm.general_registers[R2] = 2;
+        vm.program_counter = 10;
+
+        let jump_instruction = (OpCode::OpJSR as u16) | ((R2 as u16) << 6);
+
+        vm.jump_register_or_offset(jump_instruction);
+
+        assert_eq!(vm.program_counter, 2);
+        assert_eq!(vm.general_registers[R7], 10);
     }
 }
