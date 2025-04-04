@@ -1,5 +1,5 @@
 use std::{
-    io::{stdout, Write}, ops::{BitAnd, BitOr, BitOrAssign, Index, IndexMut, Shl}, slice::SliceIndex, sync::Arc
+    io::{stdin, stdout, Read, Write}, ops::{BitAnd, BitOr, BitOrAssign, Index, IndexMut, Shl}, slice::SliceIndex, sync::Arc
 };
 
 //The number of memory addresses is 2^16
@@ -273,6 +273,9 @@ impl LC3VM {
         match trap_code {
             TrapPUTS => { self.puts(); },
             TrapHALT => { self.halt(); },
+            TrapOUT => { self.out(); },
+            TrapIN => { self.trap_in(); }
+            TrapGETC => { self.get_character(); },
             _ => {}
         }
     }
@@ -291,6 +294,27 @@ impl LC3VM {
     fn halt(&mut self) {
         self.running = false;
     }
+
+    fn out(&mut self) {
+        print!("{}", (self.general_registers[R0] & 0xFF) as u8 as char);
+        stdout().flush();
+    }
+
+    fn trap_in(&mut self) {
+        let mut character = [0;1];
+        stdin().read_exact(&mut character);
+        print!("{}", character[0]);
+        stdout().flush();
+        self.general_registers[R0] = character[0] as u16;
+        self.update_flags(R0 as usize);
+    }
+
+    fn get_character(&mut self) {
+        let mut character = [0;1];
+        stdin().read_exact(&mut character);
+        self.general_registers[R0] = character[0] as u16;
+    }
+
 }
 
 /// The opcodes for the instructions the architecture supports
@@ -913,4 +937,63 @@ mod tests {
 
         assert!(!vm.running);
     }
+
+    #[test]
+    fn out_outputs_char() {
+        let mut vm = LC3VM::new();
+
+        let trap_out_instruction = OpCode::OpTRAP as u16 | TrapOUT as u16;
+
+        vm.general_registers[R0] = 'T' as u16;
+
+        vm.execute_trap_routine(trap_out_instruction);
+
+        vm.general_registers[R0] = 'e' as u16;
+
+        vm.execute_trap_routine(trap_out_instruction);
+
+        vm.general_registers[R0] = 's' as u16;
+
+        vm.execute_trap_routine(trap_out_instruction);
+
+        vm.general_registers[R0] = 't' as u16;
+
+        vm.execute_trap_routine(trap_out_instruction);
+
+        vm.general_registers[R0] = '_' as u16;
+
+        vm.execute_trap_routine(trap_out_instruction);
+
+        vm.general_registers[R0] = 'O' as u16;
+
+        vm.execute_trap_routine(trap_out_instruction);
+
+        vm.general_registers[R0] = 'K' as u16;
+
+        vm.execute_trap_routine(trap_out_instruction);
+    }
+
+    /*#[test]
+    fn in_works_correctly() {
+        let mut vm = LC3VM::new();
+
+        let trap_in_instruction = OpCode::OpTRAP as u16 | TrapIN as u16;
+
+        vm.execute_trap_routine(trap_in_instruction);
+
+        assert_eq!(vm.general_registers[R0], 'R' as u16);
+    }
+
+    #[test]
+    fn get_character_works_correctly() {
+        let mut vm = LC3VM::new();
+
+        let trap_in_instruction = OpCode::OpTRAP as u16 | TrapGETC as u16;
+
+        vm.execute_trap_routine(trap_in_instruction);
+
+        assert_eq!(vm.general_registers[R0], 'R' as u16);
+    } */
+
+
 }
