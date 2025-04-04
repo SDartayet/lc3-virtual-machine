@@ -43,6 +43,7 @@ struct LC3VM {
     memory: [u16; MAX_MEMORY_ADDRESS as usize],
 }
 use Flag::*;
+use GeneralPurposeRegister::*;
 
 impl LC3VM {
     fn new() -> LC3VM {
@@ -176,7 +177,9 @@ impl LC3VM {
     /// Instruction structure: OPCODE (4 bits) | Mode (0 for register and 1 for offset, 1 bit) | [00 | Number of the register with the memory address (3 bits) | 000000] in register mode or 11 bit offset in offset mode
     fn jump_register_or_offset(&mut self, instruction: lc3_instruction) {
         // I get the 11th bit. If it's zero then I need to use register mode, if it's one I need to use offset mode
-        let is_register_mode = (instruction >> 11) == 0;
+        let is_register_mode = ((instruction >> 11) & 1) == 0;
+
+        self.general_registers[R7] = self.program_counter;
 
         if (is_register_mode) {
             ///I get the destination register by skipping the filler zeroes and getting the three bits that come after that
@@ -187,10 +190,6 @@ impl LC3VM {
             extend_sign_for_integer(offset, 11);
             self.program_counter += offset;
         }
-
-        ///I get the destination register by skipping the filler zeroes and getting the three bits that come after that
-        let destination_register = ((instruction >> 6) & 0b111) as usize;
-        self.program_counter = self.general_registers[destination_register];
     }
 }
 
@@ -597,5 +596,35 @@ mod tests {
         vm.jump(jump_instruction);
 
         assert_eq!(vm.program_counter, 2);
+    }
+
+    #[test]
+    fn jsr_works_correctly_for_offset_mode() {
+        let mut vm = LC3VM::new();
+
+        vm.general_registers[R2] = 2;
+        vm.program_counter= 10;
+
+        let jump_instruction = (OpCode::OpJSR as u16) | (0b1 << 11) | 15;
+
+        vm.jump_register_or_offset(jump_instruction);
+
+        assert_eq!(vm.program_counter, 25);
+        assert_eq!(vm.general_registers[R7], 10);
+    }
+
+    #[test]
+    fn jsr_works_correctly_for_register_mode() {
+        let mut vm = LC3VM::new();
+
+        vm.general_registers[R2] = 2;
+        vm.program_counter= 10;
+
+        let jump_instruction = (OpCode::OpJSR as u16) | ((R2 as u16) << 6);
+
+        vm.jump_register_or_offset(jump_instruction);
+
+        assert_eq!(vm.program_counter, 2);
+        assert_eq!(vm.general_registers[R7], 10);
     }
 }
