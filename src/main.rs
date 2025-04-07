@@ -1,17 +1,15 @@
 use std::{
-    fs::File,
-    future,
-    io::{Read, Write, stdin, stdout},
-    ops::{BitAnd, BitOr, BitOrAssign, Index, IndexMut, Shl},
-    path::Path,
-    slice::SliceIndex,
-    sync::Arc,
+    env, fs::File, io::{stdin, stdout, Read, Write}, ops::{BitAnd, BitOr, BitOrAssign, Index, IndexMut, Shl}, path::Path, process::exit, slice::SliceIndex, sync::Arc
 };
 use OpCode::*;
+use Flag::*;
+use GeneralPurposeRegister::*;
+use TrapCode::*;
 
 //The number of memory addresses is 2^16
-const MAX_MEMORY_ADDRESS: u16 = u16::MAX;
-const REGISTER_COUNT: u8 = 10;
+const MAX_MEMORY_ADDRESS: usize = u16::MAX as usize;
+const MEMORY_REGISTER_KEYBOARD_STATUS_ADDRESS: usize = 0xFE00;
+const MEMORY_REGISTER_KEYBOARD_DATA_ADDRESS: usize = 0xFE02;
 
 type lc3_instruction = u16;
 
@@ -59,12 +57,11 @@ struct LC3VM {
     general_registers: [u16; 8],
     program_counter: u16,
     condition_flags: u16,
-    memory: [u16; MAX_MEMORY_ADDRESS as usize],
+    memory: MemoryArray,
     running: bool,
 }
-use Flag::*;
-use GeneralPurposeRegister::*;
-use TrapCode::*;
+
+struct MemoryArray([u16; MAX_MEMORY_ADDRESS as usize]);
 
 impl LC3VM {
     fn new() -> LC3VM {
@@ -72,7 +69,7 @@ impl LC3VM {
             general_registers: [0; 8],
             program_counter: 0x3000,
             condition_flags: 0,
-            memory: [0; MAX_MEMORY_ADDRESS as usize],
+            memory: MemoryArray([0; MAX_MEMORY_ADDRESS as usize]),
             running: true,
         }
     }
@@ -171,7 +168,7 @@ impl LC3VM {
     /// Jumps a set number of instructions if zero, negative or positive flags are up (depending on encoding)
     /// Instruction structure: OPCODE (4 bits) | Negative flag (1 bit) | Zero flag (1 bit) | Positive flag (1 bit) | Offset from current PC value to which to jump (9 bits)
     fn branch(&mut self) {
-        let instruction = self.memory[self.program_counter];
+        let instruction = self.memory[self.program_counter as usize];
         //The 9 rightmost bits contain the offset I need to jump when the condition is true
         //ox1FF is 9 bits set to 1
         let program_counter_offset = instruction & 0x01FF;
@@ -195,7 +192,7 @@ impl LC3VM {
     /// Instruction structure: OPCODE (4 bits) | 000 | Number of the register with the memory address (3 bits) | 000000
     fn jump(&mut self) {
         let instruction = self.memory[self.program_counter as usize];
-        ///I get the destination register by skipping the filler zeroes and getting the three bits that come after that
+        //I get the destination register by skipping the filler zeroes and getting the three bits that come after that
         let destination_register = ((instruction >> 6) & 0b111) as usize;
         self.program_counter = self.general_registers[destination_register];
     }
@@ -210,7 +207,7 @@ impl LC3VM {
         self.general_registers[R7] = self.program_counter;
 
         if (is_register_mode) {
-            ///I get the destination register by skipping the filler zeroes and getting the three bits that come after that
+            //I get the destination register by skipping the filler zeroes and getting the three bits that come after that
             let destination_register = ((instruction >> 6) & 0b111) as usize;
             self.program_counter = self.general_registers[destination_register];
         } else {
@@ -285,7 +282,8 @@ impl LC3VM {
         //I "push" the bits for the register number to the rightmost position, and make all the other bits 0 by doing a bitwise AND with 0b111
         let source_register = (instruction >> 9) & 0b111;
         let offset = extend_sign_for_integer(instruction & 0b111111111, 9);
-        self.memory[self.memory[(self.program_counter + offset) as usize] as usize] =
+        let address_to_store_in = self.memory[(self.program_counter + offset) as usize];
+        self.memory[address_to_store_in as usize] =
             self.general_registers[source_register as usize];
     }
 
@@ -386,7 +384,7 @@ impl LC3VM {
         stdout().flush();
     }
 
-    fn read_image_file(&mut self, file_path: &Path) {
+    fn read_image_file(&mut self, file_path: &Path) -> bool {
         let image_file = File::open(file_path).unwrap();
         let mut file_bytestream = image_file.bytes();
 
@@ -402,6 +400,7 @@ impl LC3VM {
                 ((byte_2 << 8) | byte_1 as u16) as u16;
             offset += 1;
         }
+        return true;
     }
 }
 
@@ -522,12 +521,49 @@ impl<T> IndexMut<GeneralPurposeRegister> for [T] {
     }
 }
 
+impl Index<usize> for MemoryArray {
+    type Output = u16;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        if index == MEMORY_REGISTER_KEYBOARD_DATA_ADDRESS {
+            if check_key() {
+                self.0[MEMORY_REGISTER_KEYBOARD_STATUS_ADDRESS] = (1 << 15);
+                self.0[MEMORY_REGISTER_KEYBOARD_DATA_ADDRESS] = getchar();
+            } else { self.0[MEMORY_REGISTER_KEYBOARD_STATUS_ADDRESS] = 0; }
+        }
+        &self.0[index]
+    }
+}
+
+impl IndexMut<usize> for MemoryArray {
+
+    fn index_mut(&mut self, index: usize) -> &mut Self::Output {
+        &mut self.0[index]
+    }
+}
+
 fn main() {
     let mut vm = LC3VM::new();
-    let file_path = Path::new();
-    vm.read_image_file(file_path);
+    let args: Vec<String> = env::args().collect();
+    if (args.len() < 2)
+    {
+        /* show usage string */
+        print!("lc3 [image-file1] ...\n");
+        exit(2);
+    }
+
+    for j in 1.. args.len() {
+        let file_path = Path::new(&args[j]);
+
+        if (vm.read_image_file(file_path))
+        {
+            print!("failed to load image: {}\n", args[j]);
+            exit(1);
+        }
+    }
     while vm.running {
         let instruction = OpCode::from(vm.memory[vm.program_counter as usize] >> 12);
+        vm.program_counter += 1;
         match instruction {
             OpADD => vm.add(),
             OpAND => vm.and(),
@@ -544,7 +580,6 @@ fn main() {
             OpTRAP => vm.execute_trap_routine(),
             _ => {}
         }
-        
     }
 }
 
