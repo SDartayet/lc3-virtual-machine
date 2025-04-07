@@ -254,7 +254,8 @@ impl LC3VM {
         let destination_register = (instruction >> 9) & 0b111;
         let offset = extend_sign_for_integer(instruction & 0x1FF, 9);
         self.general_registers[destination_register as usize] =
-            self.memory[(self.program_counter + offset) as usize];
+            self.memory[(self.program_counter.wrapping_add(offset)) as usize];
+        self.update_flags(destination_register as usize);
     }
 
     /// Loads a value from memory into a register. The address is an offset from a register dictated by the instruction
@@ -265,8 +266,10 @@ impl LC3VM {
         let destination_register = (instruction >> 9) & 0b111;
         let source_address_register = (instruction >> 6) & 0b111;
         let offset = extend_sign_for_integer(instruction & 0b111111, 6);
-        self.general_registers[destination_register as usize] = self.memory
-            [(self.general_registers[source_address_register as usize] + offset) as usize];
+        self.general_registers[destination_register as usize] =
+            self.memory[(self.general_registers[source_address_register as usize]
+                .wrapping_add(offset)) as usize];
+        self.update_flags(destination_register as usize);
     }
 
     /// Loads a value into a register. The address is an offset from from the program counter
@@ -288,7 +291,7 @@ impl LC3VM {
         //I "push" the bits for the register number to the rightmost position, and make all the other bits 0 by doing a bitwise AND with 0b111
         let source_register = (instruction >> 9) & 0b111;
         let offset = extend_sign_for_integer(instruction & 0x1FF, 9);
-        self.memory[(self.program_counter + offset) as usize] =
+        self.memory[(self.program_counter.wrapping_add(offset)) as usize] =
             self.general_registers[source_register as usize];
     }
 
@@ -300,8 +303,8 @@ impl LC3VM {
         let source_register = (instruction >> 9) & 0b111;
         let base_address_register = (instruction >> 6) & 0b111;
         let offset = extend_sign_for_integer(instruction & 0b111111, 6);
-        self.memory[(self.general_registers[base_address_register as usize] + offset) as usize] =
-            self.general_registers[source_register as usize];
+        self.memory[(self.general_registers[base_address_register as usize].wrapping_add(offset))
+            as usize] = self.general_registers[source_register as usize];
     }
 
     /// Stores an value from a register into the address pointed to by an address in memory, itself pointed to by the program counter + an offset
@@ -1102,6 +1105,74 @@ mod tests {
 
         assert_eq!(vm.program_counter, 10);
         assert_eq!(vm.general_registers[R0], 42);
+    }
+
+    #[test]
+    fn load_updates_flags() {
+        let mut vm = LC3VM::new();
+
+        vm.memory[42] = 42;
+        vm.program_counter = 10;
+
+        let load_instruction = (OpCode::OpLD as u16) | ((R0 as u16) << 9) | 32;
+
+        vm.load(load_instruction);
+
+        assert!(vm.condition_flags & FlPos != 0);
+
+        vm.memory[42] = 0;
+        vm.program_counter = 10;
+
+        let load_instruction = (OpCode::OpLD as u16) | ((R0 as u16) << 9) | 32;
+
+        vm.load(load_instruction);
+
+        assert!(vm.condition_flags & FlZero != 0);
+
+        vm.memory[42] = 0xF000;
+        vm.program_counter = 10;
+
+        let load_instruction = (OpCode::OpLD as u16) | ((R0 as u16) << 9) | 32;
+
+        vm.load(load_instruction);
+
+        assert!(vm.condition_flags & FlNeg != 0);
+    }
+
+    #[test]
+    fn load_register_updates_flags() {
+        let mut vm = LC3VM::new();
+
+        vm.memory[42] = 42;
+        vm.program_counter = 10;
+        vm.general_registers[R1] = 11;
+
+        let load_register_instruction =
+            (OpCode::OpLDR as u16) | ((R0 as u16) << 9) | ((R1 as u16) << 6) | 31;
+
+        vm.load_register(load_register_instruction);
+
+        assert!(vm.condition_flags & FlPos != 0);
+
+        vm.memory[42] = 0xF000;
+        vm.program_counter = 10;
+        vm.general_registers[R1] = 11;
+
+        let load_register_instruction =
+            (OpCode::OpLDR as u16) | ((R0 as u16) << 9) | ((R1 as u16) << 6) | 31;
+
+        vm.load_register(load_register_instruction);
+
+        assert!(vm.condition_flags & FlNeg != 0);
+
+        vm.memory[42] = 0;
+        vm.program_counter = 10;
+
+        let load_instruction = (OpCode::OpLD as u16) | ((R0 as u16) << 9) | 32;
+
+        vm.load(load_instruction);
+
+        assert!(vm.condition_flags & FlZero != 0);
     }
 
     #[test]
