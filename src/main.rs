@@ -1,8 +1,5 @@
 use std::{
-    io::{Read, Write, stdin, stdout},
-    ops::{BitAnd, BitOr, BitOrAssign, Index, IndexMut, Shl},
-    slice::SliceIndex,
-    sync::Arc,
+    fs::File, future, io::{stdin, stdout, Read, Write}, ops::{BitAnd, BitOr, BitOrAssign, Index, IndexMut, Shl}, path::Path, slice::SliceIndex, sync::Arc
 };
 
 //The number of memory addresses is 2^16
@@ -46,6 +43,10 @@ fn extend_sign_for_integer(value: u16, value_bit_count: u16) -> u16 {
     } else {
         value
     }
+}
+
+fn little_to_big_endian(value_to_convert: u16) -> u16 {
+    (value_to_convert & 0xFF00) | (value_to_convert >> 8)
 }
 struct LC3VM {
     general_registers: [u16; 8],
@@ -363,6 +364,23 @@ impl LC3VM {
             }
         }
         stdout().flush();
+    }
+
+    fn read_image_file(&mut self, file_path: &Path) {
+        let image_file = File::open(file_path).unwrap();
+        let mut file_bytestream = image_file.bytes();
+
+        let origin_address_byte_1: u16 = file_bytestream.next().unwrap().unwrap() as u16;
+        let origin_address_byte_2: u16 = file_bytestream.next().unwrap().unwrap() as u16;
+
+        let origin_address = (origin_address_byte_2 << 8) | origin_address_byte_1;
+        let mut offset = 0;
+
+        while let Some(Ok(byte_1)) = file_bytestream.next() {
+            let byte_2 = file_bytestream.next().unwrap().unwrap() as u16;
+            self.memory[(origin_address + offset) as usize] = ((byte_2 << 8) | byte_1 as u16) as u16;
+            offset += 1;
+        }
     }
 }
 
@@ -1056,5 +1074,22 @@ mod tests {
         let trap_putsp_instruction = OpCode::OpTRAP as u16 | TrapPUTSP as u16;
 
         vm.execute_trap_routine(trap_putsp_instruction);
+    }
+
+    #[test]
+    fn binary_file_is_read_correctly() {
+        let mut vm = LC3VM::new();
+        vm.read_image_file(&Path::new("./binaries/test-data"));
+        let mut text_array = ['a';4];
+        text_array[0] = (vm.memory[42] >> 8) as u8 as char;
+        text_array[1] = (vm.memory[42] & 0xFF) as u8 as char;
+        text_array[2] = (vm.memory[43] >> 8) as u8 as char;
+        text_array[3] = (vm.memory[43] & 0xFF) as u8 as char;
+
+        assert_eq!(text_array[0], 'T');
+        assert_eq!(text_array[1], 'e');
+        assert_eq!(text_array[2], 's');
+        assert_eq!(text_array[3], 't');
+
     }
 }
