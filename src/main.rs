@@ -1,13 +1,21 @@
-use std::{
-    env, fs::File, io::{stdin, stdout, Read, Write}, ops::{BitAnd, BitOr, BitOrAssign, Index, IndexMut, Shl}, os::fd::AsRawFd, path::Path, process::exit, slice::SliceIndex, sync::Arc
-};
-use ctrlc::*;
 use ::termios::tcgetattr;
-use termios::{tcsetattr, Termios, ECHO, ICANON, TCSANOW};
-use OpCode::*;
 use Flag::*;
 use GeneralPurposeRegister::*;
+use OpCode::*;
 use TrapCode::*;
+use ctrlc::*;
+use std::{
+    env,
+    fs::File,
+    io::{Read, Write, stdin, stdout},
+    ops::{BitAnd, BitOr, BitOrAssign, Index, IndexMut, Shl},
+    os::fd::AsRawFd,
+    path::Path,
+    process::exit,
+    slice::SliceIndex,
+    sync::Arc,
+};
+use termios::{ECHO, ICANON, TCSANOW, Termios, tcsetattr};
 
 //The number of memory addresses is 2^16
 const MAX_MEMORY_ADDRESS: usize = u16::MAX as usize;
@@ -483,7 +491,7 @@ impl From<u16> for OpCode {
             0b1100 => OpJMP,
             0b1110 => OpLEA,
             0b1111 => OpTRAP,
-            _ => OpRES
+            _ => OpRES,
         }
     }
 }
@@ -552,14 +560,15 @@ impl Index<usize> for MemoryArray {
                 let mut character = [0; 1];
                 stdin().read_exact(&mut character);
                 self.0[MEMORY_REGISTER_KEYBOARD_DATA_ADDRESS] = character[0] as u16;
-            } else { self.0[MEMORY_REGISTER_KEYBOARD_STATUS_ADDRESS] = 0; }
+            } else {
+                self.0[MEMORY_REGISTER_KEYBOARD_STATUS_ADDRESS] = 0;
+            }
         }
         &self.0[index]
     }
 }
 
 impl IndexMut<usize> for MemoryArray {
-
     fn index_mut(&mut self, index: usize) -> &mut Self::Output {
         &mut self.0[index]
     }
@@ -575,18 +584,16 @@ fn main() {
 
     disable_input_buffering(&mut original_tio);
     let args: Vec<String> = env::args().collect();
-    if (args.len() < 2)
-    {
+    if (args.len() < 2) {
         /* show usage string */
         print!("lc3 [image-file1] ...\n");
         exit(2);
     }
 
-    for j in 1.. args.len() {
+    for j in 1..args.len() {
         let file_path = Path::new(&args[j]);
 
-        if (vm.read_image_file(file_path))
-        {
+        if (vm.read_image_file(file_path)) {
             print!("failed to load image: {}\n", args[j]);
             exit(1);
         }
@@ -694,7 +701,7 @@ mod tests {
             (OpCode::OpADD as u16) | ((R2 as u16) << 9) | ((R1 as u16) << 6) | (1 << 5) | 0b11010; // 0b11010 is -6 in two's complement with 5 bits
         vm.memory[vm.program_counter as usize] = add_instruction;
         vm.memory[vm.program_counter as usize] = add_instruction;
-        
+
         vm.add();
 
         assert!(vm.condition_flags & FlNeg != 0);
@@ -708,7 +715,7 @@ mod tests {
 
         let add_instruction =
             (OpCode::OpADD as u16) | ((R2 as u16) << 9) | ((R1 as u16) << 6) | (1 << 5) | 0b11011; // 0b11011 is -5 in two's complement for a 5 bit value
-        
+
         vm.memory[vm.program_counter as usize] = add_instruction;
 
         vm.add();
@@ -742,7 +749,7 @@ mod tests {
             (OpCode::OpAND as u16) | ((R2 as u16) << 9) | ((R1 as u16) << 6) | (1 << 5) | 0b01001;
 
         vm.memory[vm.program_counter as usize] = and_instruction;
-        
+
         vm.and();
 
         assert_eq!(vm.general_registers[R2], 0b00001);
@@ -883,7 +890,7 @@ mod tests {
             (OpCode::OpADD as u16) | ((R2 as u16) << 9) | ((R1 as u16) << 6) | (1 << 5) | 0b11010; // 0b11010 is -6 in two's complement with 5 bits
 
         vm.memory[vm.program_counter as usize] = add_instruction;
-        
+
         vm.add();
 
         let branch_instruction = (OpCode::OpBR as u16) | (0b100 << 9) | 2;
@@ -1055,7 +1062,7 @@ mod tests {
         let load_instruction = (OpCode::OpLD as u16) | ((R0 as u16) << 9) | 32;
 
         vm.memory[vm.program_counter as usize] = load_instruction;
-        
+
         vm.load();
 
         assert_eq!(vm.program_counter, 10);
@@ -1074,7 +1081,7 @@ mod tests {
             (OpCode::OpLDR as u16) | ((R0 as u16) << 9) | ((R1 as u16) << 6) | 31;
 
         vm.memory[vm.program_counter as usize] = load_register_instruction;
-    
+
         vm.load_register();
 
         assert_eq!(vm.program_counter, 10);
@@ -1114,7 +1121,7 @@ mod tests {
         vm.program_counter = 5;
 
         let load_address_instruction = (OpCode::OpLEA as u16) | ((R0 as u16) << 9) | 0b111111010; // 0b111111010 is -6 in two's complement with 9 bits
-        
+
         vm.memory[vm.program_counter as usize] = load_address_instruction;
 
         vm.load_address();
