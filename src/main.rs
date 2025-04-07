@@ -1,6 +1,9 @@
 use std::{
-    env, fs::File, io::{stdin, stdout, Read, Write}, ops::{BitAnd, BitOr, BitOrAssign, Index, IndexMut, Shl}, path::Path, process::exit, slice::SliceIndex, sync::Arc
+    env, fs::File, io::{stdin, stdout, Read, Write}, ops::{BitAnd, BitOr, BitOrAssign, Index, IndexMut, Shl}, os::fd::AsRawFd, path::Path, process::exit, slice::SliceIndex, sync::Arc
 };
+use ctrlc::*;
+use ::termios::tcgetattr;
+use termios::{tcsetattr, Termios, ECHO, ICANON, TCSANOW};
 use OpCode::*;
 use Flag::*;
 use GeneralPurposeRegister::*;
@@ -53,6 +56,24 @@ fn extend_sign_for_integer(value: u16, value_bit_count: u16) -> u16 {
 fn little_to_big_endian(value_to_convert: u16) -> u16 {
     (value_to_convert & 0xFF00) | (value_to_convert >> 8)
 }
+
+fn disable_input_buffering(original_tio: &mut Termios) {
+    tcgetattr(stdin().as_raw_fd(), original_tio);
+    let new_tio = original_tio;
+    new_tio.c_lflag &= !ICANON & !ECHO;
+    tcsetattr(stdin().as_raw_fd(), TCSANOW, &new_tio);
+}
+
+fn restore_input_buffering(original_tio: &mut Termios) {
+    tcsetattr(stdin().as_raw_fd(), TCSANOW, original_tio);
+}
+
+fn handle_interrupt(original_tio: &mut Termios) {
+    restore_input_buffering(original_tio);
+    print!("\n");
+    exit(-2);
+}
+
 struct LC3VM {
     general_registers: [u16; 8],
     program_counter: u16,
@@ -528,7 +549,9 @@ impl Index<usize> for MemoryArray {
         if index == MEMORY_REGISTER_KEYBOARD_DATA_ADDRESS {
             if check_key() {
                 self.0[MEMORY_REGISTER_KEYBOARD_STATUS_ADDRESS] = (1 << 15);
-                self.0[MEMORY_REGISTER_KEYBOARD_DATA_ADDRESS] = getchar();
+                let mut character = [0; 1];
+                stdin().read_exact(&mut character);
+                self.0[MEMORY_REGISTER_KEYBOARD_DATA_ADDRESS] = character[0] as u16;
             } else { self.0[MEMORY_REGISTER_KEYBOARD_STATUS_ADDRESS] = 0; }
         }
         &self.0[index]
@@ -543,7 +566,14 @@ impl IndexMut<usize> for MemoryArray {
 }
 
 fn main() {
+    let mut original_tio = Termios::from_fd(stdin().as_raw_fd()).unwrap();
     let mut vm = LC3VM::new();
+    ctrlc::set_handler(move || {
+        handle_interrupt(&mut original_tio);
+    })
+    .expect("Error setting Ctrl-C handler");
+
+    disable_input_buffering(&mut original_tio);
     let args: Vec<String> = env::args().collect();
     if (args.len() < 2)
     {
