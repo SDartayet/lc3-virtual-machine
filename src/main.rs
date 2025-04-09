@@ -19,8 +19,6 @@ const MAX_MEMORY_ADDRESS: usize = 1 << 16;
 const MEMORY_REGISTER_KEYBOARD_STATUS_ADDRESS: usize = 0xFE00;
 const MEMORY_REGISTER_KEYBOARD_DATA_ADDRESS: usize = 0xFE02;
 
-type lc3_instruction = u16;
-
 ///The registers the architecture contains.
 /// R0 to R7 are the general purpose registers. PC is the instruction pointer.
 /// RCOND is the flags register,
@@ -41,7 +39,6 @@ enum TrapCode {
     TrapIN = 0x23,    /* get character from keyboard, echoed onto the terminal */
     TrapPUTSP = 0x24, /* output a byte string */
     TrapHALT = 0x25,  /* halt the program */
-    TrapConversionError,
 }
 
 /// The opcodes for the instructions the architecture supports
@@ -398,7 +395,6 @@ impl LC3VM {
             TrapPUTSP => {
                 self.output_char8();
             }
-            _ => {}
         }
     }
 
@@ -508,7 +504,9 @@ impl From<u16> for TrapCode {
             0x23 => TrapIN,
             0x24 => TrapPUTSP,
             0x25 => TrapHALT,
-            _ => TrapConversionError,
+            _ => {
+                panic!("Invalid trap code provided");
+            }
         }
     }
 }
@@ -531,7 +529,9 @@ impl From<u16> for OpCode {
             0b1100 => OpJMP,
             0b1110 => OpLEA,
             0b1111 => OpTRAP,
-            _ => OpRES,
+            _ => {
+                panic!("Invalid OpCode provided");
+            }
         }
     }
 }
@@ -600,25 +600,21 @@ fn main() {
 
     disable_input_buffering(&mut original_tio);
     let args: Vec<String> = env::args().collect();
-    vm.read_image_file(Path::new("./binaries/2048.obj"));
-    //if args.len() < 2
-    //{
-    //
-    //    /* show usage string */
-    //    print!("lc3 [image-file1] ...\n");
-    //    exit(2);
-    //}
-    //
 
-    //for j in 1.. args.len() {
-    //    let file_path = Path::new(&args[j]);
-    //
-    //    if !vm.read_image_file(file_path)
-    //    {
-    //        print!("failed to load image: {}\n", args[j]);
-    //        exit(1);
-    //    }
-    //}
+    if args.len() < 2 {
+        /* show usage string */
+        print!("lc3 [image-file1] ...\n");
+        exit(2);
+    }
+
+    for j in 1..args.len() {
+        let file_path = Path::new(&args[j]);
+
+        if !vm.read_image_file(file_path) {
+            print!("failed to load image: {}\n", args[j]);
+            exit(1);
+        }
+    }
     while vm.running {
         vm.current_instruction =
             vm.read_memory_and_check_keyboard_input(vm.program_counter as usize);
@@ -641,7 +637,7 @@ fn main() {
             OpTRAP => vm.execute_trap_routine(),
             OpLDI => vm.load_indirect(),
             _ => {
-                panic!();
+                panic!("Error: Invalid OpCode provided");
             }
         }
     }
