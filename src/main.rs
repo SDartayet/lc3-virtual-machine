@@ -47,22 +47,22 @@ enum TrapCode {
 /// The opcodes for the instructions the architecture supports
 #[derive(Debug)]
 enum OpCode {
-    OpBR = 0b0000 << 12,    /* branch */
-    OpADD = 0b0001 << 12, /* add  */
-    OpLD = 0b0010 << 12,  /* load */
-    OpST = 0b0011 << 12,    /* store */
-    OpJSR = 0b0100 << 12,   /* jump register */
-    OpAND = 0b0101 << 12,   /* bitwise and */
-    OpLDR = 0b0110 << 12,   /* load register */
-    OpSTR = 0b0111 << 12,   /* store register */
-    OpRTI,                /* unused */
-    OpNOT = 0b1001 << 12,   /* bitwise not */
-    OpLDI = 0b1010 << 12,   /* load indirect */
-    OpSTI = 0b1011 << 12,   /* store indirect */
-    OpJMP = 0b1100 << 12,   /* jump */
-    OpRES,                /* reserved (unused) */
-    OpLEA = 0b1110 << 12,   /* load effective address */
-    OpTRAP = 0b1111 << 12,  /* execute trap */
+    OpBR = 0b0000 << 12,   /* branch */
+    OpADD = 0b0001 << 12,  /* add  */
+    OpLD = 0b0010 << 12,   /* load */
+    OpST = 0b0011 << 12,   /* store */
+    OpJSR = 0b0100 << 12,  /* jump register */
+    OpAND = 0b0101 << 12,  /* bitwise and */
+    OpLDR = 0b0110 << 12,  /* load register */
+    OpSTR = 0b0111 << 12,  /* store register */
+    OpRTI,                 /* unused */
+    OpNOT = 0b1001 << 12,  /* bitwise not */
+    OpLDI = 0b1010 << 12,  /* load indirect */
+    OpSTI = 0b1011 << 12,  /* store indirect */
+    OpJMP = 0b1100 << 12,  /* jump */
+    OpRES,                 /* reserved (unused) */
+    OpLEA = 0b1110 << 12,  /* load effective address */
+    OpTRAP = 0b1111 << 12, /* execute trap */
 }
 
 enum Flag {
@@ -140,7 +140,7 @@ impl LC3VM {
     }
 
     fn read_memory_and_check_keyboard_input(&mut self, index: usize) -> u16 {
-        if index == MEMORY_REGISTER_KEYBOARD_DATA_ADDRESS {
+        if index == MEMORY_REGISTER_KEYBOARD_STATUS_ADDRESS {
             let mut input_buffer = [1; 1];
             stdin().read_exact(&mut input_buffer);
             if input_buffer[0] != 0 {
@@ -234,7 +234,7 @@ impl LC3VM {
         let instruction = self.current_instruction;
         //The 9 rightmost bits contain the offset I need to jump when the condition is true
         //ox1FF is 9 bits set to 1
-        let program_counter_offset = instruction & 0x01FF;
+        let program_counter_offset = extend_sign_for_integer(instruction & 0x01FF, 9);
 
         //Starting left, bit 10 is that the condition is the positive flag being up, bit 11 is the zero one being up, and bit 12 the negative one
         //I shift 9 rightward and and the value with 0b111 to get the value of the three
@@ -286,8 +286,10 @@ impl LC3VM {
         //I "push" the bits for the register number to the rightmost position, and make all the other bits 0 by doing a bitwise AND with 0b111
         let destination_register = (instruction >> 9) & 0b111;
         let offset = extend_sign_for_integer(instruction & 0x1FF, 9);
-        self.general_registers[destination_register as usize] =
-            self.memory[(self.program_counter.wrapping_add(offset)) as usize];
+        self.general_registers[destination_register as usize] = self
+            .read_memory_and_check_keyboard_input(
+                (self.program_counter.wrapping_add(offset)) as usize,
+            );
         self.update_flags(destination_register as usize);
     }
 
@@ -299,9 +301,11 @@ impl LC3VM {
         let destination_register = (instruction >> 9) & 0b111;
         let source_address_register = (instruction >> 6) & 0b111;
         let offset = extend_sign_for_integer(instruction & 0b111111, 6);
-        self.general_registers[destination_register as usize] =
-            self.memory[(self.general_registers[source_address_register as usize]
-                .wrapping_add(offset)) as usize];
+        self.general_registers[destination_register as usize] = self
+            .read_memory_and_check_keyboard_input(
+                (self.general_registers[source_address_register as usize].wrapping_add(offset))
+                    as usize,
+            );
         self.update_flags(destination_register as usize);
     }
 
@@ -314,7 +318,6 @@ impl LC3VM {
         let offset = extend_sign_for_integer(instruction & 0x1FF, 9);
         self.general_registers[destination_register as usize] =
             self.program_counter.wrapping_add(offset);
-        self.update_flags(destination_register as usize);
     }
 
     /// Loads a value into a register from a location in memory. The address is an offset from the program counter
@@ -362,8 +365,9 @@ impl LC3VM {
         //I "push" the bits for the register number to the rightmost position, and make all the other bits 0 by doing a bitwise AND with 0b111
         let source_register = (instruction >> 9) & 0b111;
         let offset = extend_sign_for_integer(instruction & 0b111111111, 9);
-        let address_to_store_in =
-            self.read_memory_and_check_keyboard_input((self.program_counter.wrapping_add(offset)) as usize);
+        let address_to_store_in = self.read_memory_and_check_keyboard_input(
+            (self.program_counter.wrapping_add(offset)) as usize,
+        );
         self.memory[address_to_store_in as usize] =
             self.general_registers[source_register as usize];
     }
@@ -406,8 +410,9 @@ impl LC3VM {
         while character_to_output != char::from(0x0) {
             print!("{}", character_to_output);
             offset += 1;
-            character_to_output =
-                (self.memory[(self.general_registers[R0] as usize).wrapping_add(offset)] & 0xFF) as u8 as char;
+            character_to_output = (self.memory
+                [(self.general_registers[R0] as usize).wrapping_add(offset)]
+                & 0xFF) as u8 as char;
         }
         stdout().flush();
     }
@@ -455,7 +460,8 @@ impl LC3VM {
             let mut offset: usize = 1;
             while character_to_output != char::from(0x0) {
                 print!("{}", character_to_output);
-                current_memory_value = self.memory[(self.general_registers[R0] as usize).wrapping_add(offset)];
+                current_memory_value =
+                    self.memory[(self.general_registers[R0] as usize).wrapping_add(offset)];
                 character_to_output = (current_memory_value & 0xFF) as u8 as char;
                 if character_to_output == char::from(0x0) {
                     break;
@@ -481,9 +487,12 @@ impl LC3VM {
 
         while let Some(Ok(byte_1)) = file_bytestream.next() {
             let byte_2 = file_bytestream.next().unwrap().unwrap() as u8;
-            self.memory[(origin_address.wrapping_add(offset)) as usize] = u16::from_be_bytes([byte_1, byte_2]);
+            self.memory[(origin_address.wrapping_add(offset)) as usize] =
+                u16::from_be_bytes([byte_1, byte_2]);
             offset += 1;
-            if offset == maximum_offset as u16 { break; }
+            if offset == maximum_offset as u16 {
+                break;
+            }
         }
         true
     }
@@ -614,7 +623,7 @@ fn main() {
             vm.read_memory_and_check_keyboard_input(vm.program_counter as usize);
         let instruction_code = OpCode::from(vm.memory[vm.program_counter as usize]);
         vm.program_counter = vm.program_counter.wrapping_add(1);
-        println!("{:?}", instruction_code);
+        //println!("{:?}", instruction_code);
         match instruction_code {
             OpADD => vm.add(),
             OpAND => vm.and(),
@@ -653,7 +662,7 @@ mod tests {
         let add_instruction =
             (OpCode::OpADD as u16) | ((R2 as u16) << 9) | ((R1 as u16) << 6) | R0 as u16;
 
-        vm.memory[vm.program_counter as usize] = add_instruction;
+        vm.current_instruction = add_instruction;
 
         vm.add();
 
@@ -669,7 +678,7 @@ mod tests {
         let add_instruction =
             (OpCode::OpADD as u16) | ((R2 as u16) << 9) | ((R1 as u16) << 6) | (1 << 5) | 4;
 
-        vm.memory[vm.program_counter as usize] = add_instruction;
+        vm.current_instruction = add_instruction;
 
         vm.add();
 
@@ -685,7 +694,7 @@ mod tests {
         let add_instruction =
             (OpCode::OpADD as u16) | ((R2 as u16) << 9) | ((R1 as u16) << 6) | (1 << 5) | 011011; // 0b11111011 is -5 in two's complement
 
-        vm.memory[vm.program_counter as usize] = add_instruction;
+        vm.current_instruction = add_instruction;
 
         vm.add();
 
@@ -701,7 +710,7 @@ mod tests {
 
         let add_instruction =
             (OpCode::OpADD as u16) | ((R2 as u16) << 9) | ((R1 as u16) << 6) | R0 as u16;
-        vm.memory[vm.program_counter as usize] = add_instruction;
+        vm.current_instruction = add_instruction;
 
         vm.add();
 
@@ -716,8 +725,7 @@ mod tests {
 
         let add_instruction =
             (OpCode::OpADD as u16) | ((R2 as u16) << 9) | ((R1 as u16) << 6) | (1 << 5) | 0b11010; // 0b11010 is -6 in two's complement with 5 bits
-        vm.memory[vm.program_counter as usize] = add_instruction;
-        vm.memory[vm.program_counter as usize] = add_instruction;
+        vm.current_instruction = add_instruction;
 
         vm.add();
 
@@ -733,7 +741,7 @@ mod tests {
         let add_instruction =
             (OpCode::OpADD as u16) | ((R2 as u16) << 9) | ((R1 as u16) << 6) | (1 << 5) | 0b11011; // 0b11011 is -5 in two's complement for a 5 bit value
 
-        vm.memory[vm.program_counter as usize] = add_instruction;
+        vm.current_instruction = add_instruction;
 
         vm.add();
 
@@ -749,7 +757,7 @@ mod tests {
         let add_instruction =
             (OpCode::OpADD as u16) | ((R2 as u16) << 9) | ((R1 as u16) << 6) | (1 << 5) | 0b1;
 
-        vm.memory[vm.program_counter as usize] = add_instruction;
+        vm.current_instruction = add_instruction;
 
         vm.add();
 
@@ -765,7 +773,7 @@ mod tests {
         let and_instruction =
             (OpCode::OpAND as u16) | ((R2 as u16) << 9) | ((R1 as u16) << 6) | (1 << 5) | 0b01001;
 
-        vm.memory[vm.program_counter as usize] = and_instruction;
+        vm.current_instruction = and_instruction;
 
         vm.and();
 
@@ -782,7 +790,7 @@ mod tests {
         let and_instruction =
             (OpCode::OpAND as u16) | ((R2 as u16) << 9) | ((R1 as u16) << 6) | R0 as u16;
 
-        vm.memory[vm.program_counter as usize] = and_instruction;
+        vm.current_instruction = and_instruction;
 
         vm.and();
 
@@ -798,7 +806,7 @@ mod tests {
         let and_instruction =
             (OpCode::OpADD as u16) | ((R2 as u16) << 9) | ((R1 as u16) << 6) | (1 << 5) | 0b11010; // 0b11111010 is -6 in two's complement
 
-        vm.memory[vm.program_counter as usize] = and_instruction;
+        vm.current_instruction = and_instruction;
 
         vm.and();
 
@@ -814,7 +822,7 @@ mod tests {
         let and_instruction =
             (OpCode::OpADD as u16) | ((R2 as u16) << 9) | ((R1 as u16) << 6) | (1 << 5) | 0b00110; // 0b11011 is -5 in two's complement for a 5 bit value
 
-        vm.memory[vm.program_counter as usize] = and_instruction;
+        vm.current_instruction = and_instruction;
 
         vm.and();
 
@@ -830,7 +838,7 @@ mod tests {
         let and_instruction =
             (OpCode::OpADD as u16) | ((R2 as u16) << 9) | ((R1 as u16) << 6) | (1 << 5) | 0b1;
 
-        vm.memory[vm.program_counter as usize] = and_instruction;
+        vm.current_instruction = and_instruction;
 
         vm.and();
 
@@ -845,7 +853,7 @@ mod tests {
 
         let not_instruction = (OpCode::OpAND as u16) | ((R1 as u16) << 9) | ((R0 as u16) << 6);
 
-        vm.memory[vm.program_counter as usize] = not_instruction;
+        vm.current_instruction = not_instruction;
 
         vm.not();
 
@@ -860,7 +868,7 @@ mod tests {
 
         let not_instruction = (OpCode::OpADD as u16) | ((R1 as u16) << 9) | ((R0 as u16) << 6);
 
-        vm.memory[vm.program_counter as usize] = not_instruction;
+        vm.current_instruction = not_instruction;
 
         vm.not();
 
@@ -875,7 +883,7 @@ mod tests {
 
         let not_instruction = (OpCode::OpADD as u16) | ((R1 as u16) << 9) | ((R0 as u16) << 6);
 
-        vm.memory[vm.program_counter as usize] = not_instruction;
+        vm.current_instruction = not_instruction;
 
         vm.not();
 
@@ -890,7 +898,7 @@ mod tests {
 
         let not_instruction = (OpCode::OpADD as u16) | ((R1 as u16) << 9) | ((R0 as u16) << 6);
 
-        vm.memory[vm.program_counter as usize] = not_instruction;
+        vm.current_instruction = not_instruction;
 
         vm.not();
 
@@ -906,13 +914,13 @@ mod tests {
         let add_instruction =
             (OpCode::OpADD as u16) | ((R2 as u16) << 9) | ((R1 as u16) << 6) | (1 << 5) | 0b11010; // 0b11010 is -6 in two's complement with 5 bits
 
-        vm.memory[vm.program_counter as usize] = add_instruction;
+        vm.current_instruction = add_instruction;
 
         vm.add();
 
         let branch_instruction = (OpCode::OpBR as u16) | (0b100 << 9) | 2;
 
-        vm.memory[vm.program_counter as usize] = branch_instruction;
+        vm.current_instruction = branch_instruction;
 
         vm.branch();
 
@@ -928,13 +936,13 @@ mod tests {
         let add_instruction =
             (OpCode::OpADD as u16) | ((R2 as u16) << 9) | ((R1 as u16) << 6) | (1 << 5) | 0b11010; // 0b11010 is -6 in two's complement with 5 bits
 
-        vm.memory[vm.program_counter as usize] = add_instruction;
+        vm.current_instruction = add_instruction;
 
         vm.add();
 
         let branch_instruction = (OpCode::OpBR as u16) | (0b010 << 9) | 2;
 
-        vm.memory[vm.program_counter as usize] = branch_instruction;
+        vm.current_instruction = branch_instruction;
 
         vm.branch();
 
@@ -950,13 +958,13 @@ mod tests {
         let add_instruction =
             (OpCode::OpADD as u16) | ((R2 as u16) << 9) | ((R1 as u16) << 6) | (1 << 5) | 0b11010; // 0b11010 is -6 in two's complement with 5 bits
 
-        vm.memory[vm.program_counter as usize] = add_instruction;
+        vm.current_instruction = add_instruction;
 
         vm.add();
 
         let branch_instruction = (OpCode::OpBR as u16) | (0b001 << 9) | 2;
 
-        vm.memory[vm.program_counter as usize] = branch_instruction;
+        vm.current_instruction = branch_instruction;
 
         vm.branch();
 
@@ -972,13 +980,13 @@ mod tests {
         let add_instruction =
             (OpCode::OpADD as u16) | ((R2 as u16) << 9) | ((R1 as u16) << 6) | (1 << 5) | 0b11010; // 0b11010 is -6 in two's complement with 5 bits
 
-        vm.memory[vm.program_counter as usize] = add_instruction;
+        vm.current_instruction = add_instruction;
 
         vm.add();
 
         let branch_instruction = (OpCode::OpBR as u16) | (0b011 << 9) | 2;
 
-        vm.memory[vm.program_counter as usize] = branch_instruction;
+        vm.current_instruction = branch_instruction;
 
         vm.branch();
 
@@ -994,13 +1002,13 @@ mod tests {
         let add_instruction =
             (OpCode::OpADD as u16) | ((R2 as u16) << 9) | ((R1 as u16) << 6) | (1 << 5) | 0b11010; // 0b11010 is -6 in two's complement with 5 bits
 
-        vm.memory[vm.program_counter as usize] = add_instruction;
+        vm.current_instruction = add_instruction;
 
         vm.add();
 
         let branch_instruction = (OpCode::OpBR as u16) | (0b101 << 9) | 2;
 
-        vm.memory[vm.program_counter as usize] = branch_instruction;
+        vm.current_instruction = branch_instruction;
 
         vm.branch();
 
@@ -1013,7 +1021,7 @@ mod tests {
 
         let branch_instruction = (OpCode::OpBR as u16) | (0b001 << 9) | 2;
 
-        vm.memory[vm.program_counter as usize] = branch_instruction;
+        vm.current_instruction = branch_instruction;
 
         vm.branch();
 
@@ -1028,7 +1036,7 @@ mod tests {
 
         let jump_instruction = (OpCode::OpJMP as u16) | (0b000 << 9) | ((R2 as u16) << 6);
 
-        vm.memory[vm.program_counter as usize] = jump_instruction;
+        vm.current_instruction = jump_instruction;
 
         vm.jump();
 
@@ -1044,7 +1052,7 @@ mod tests {
 
         let jump_instruction = (OpCode::OpJSR as u16) | (0b1 << 11) | 15;
 
-        vm.memory[vm.program_counter as usize] = jump_instruction;
+        vm.current_instruction = jump_instruction;
 
         vm.jump_register_or_offset();
 
@@ -1061,7 +1069,7 @@ mod tests {
 
         let jump_instruction = (OpCode::OpJSR as u16) | ((R2 as u16) << 6);
 
-        vm.memory[vm.program_counter as usize] = jump_instruction;
+        vm.current_instruction = jump_instruction;
 
         vm.jump_register_or_offset();
 
@@ -1078,7 +1086,7 @@ mod tests {
 
         let load_instruction = (OpCode::OpLD as u16) | ((R0 as u16) << 9) | 32;
 
-        vm.memory[vm.program_counter as usize] = load_instruction;
+        vm.current_instruction = load_instruction;
 
         vm.load();
 
@@ -1097,11 +1105,10 @@ mod tests {
         let load_register_instruction =
             (OpCode::OpLDR as u16) | ((R0 as u16) << 9) | ((R1 as u16) << 6) | 31;
 
-        vm.memory[vm.program_counter as usize] = load_register_instruction;
+        vm.current_instruction = load_register_instruction;
 
         vm.load_register();
 
-        assert_eq!(vm.program_counter, 10);
         assert_eq!(vm.general_registers[R0], 42);
     }
 
@@ -1113,7 +1120,7 @@ mod tests {
 
         let load_address_instruction = (OpCode::OpLEA as u16) | ((R0 as u16) << 9) | 32;
 
-        vm.memory[vm.program_counter as usize] = load_address_instruction;
+        vm.current_instruction = load_address_instruction;
 
         vm.load_address();
 
@@ -1130,6 +1137,8 @@ mod tests {
 
         let load_instruction = (OpCode::OpLD as u16) | ((R0 as u16) << 9) | 32;
 
+        vm.current_instruction = load_instruction;
+
         vm.load();
 
         assert!(vm.condition_flags & FlPos != 0);
@@ -1139,6 +1148,8 @@ mod tests {
 
         let load_instruction = (OpCode::OpLD as u16) | ((R0 as u16) << 9) | 32;
 
+        vm.current_instruction = load_instruction;
+
         vm.load();
 
         assert!(vm.condition_flags & FlZero != 0);
@@ -1147,6 +1158,8 @@ mod tests {
         vm.program_counter = 10;
 
         let load_instruction = (OpCode::OpLD as u16) | ((R0 as u16) << 9) | 32;
+
+        vm.current_instruction = load_instruction;
 
         vm.load();
 
@@ -1164,6 +1177,8 @@ mod tests {
         let load_register_instruction =
             (OpCode::OpLDR as u16) | ((R0 as u16) << 9) | ((R1 as u16) << 6) | 31;
 
+        vm.current_instruction = load_register_instruction;
+
         vm.load_register();
 
         assert!(vm.condition_flags & FlPos != 0);
@@ -1175,6 +1190,8 @@ mod tests {
         let load_register_instruction =
             (OpCode::OpLDR as u16) | ((R0 as u16) << 9) | ((R1 as u16) << 6) | 31;
 
+        vm.current_instruction = load_register_instruction;
+
         vm.load_register();
 
         assert!(vm.condition_flags & FlNeg != 0);
@@ -1183,6 +1200,8 @@ mod tests {
         vm.program_counter = 10;
 
         let load_instruction = (OpCode::OpLD as u16) | ((R0 as u16) << 9) | 32;
+
+        vm.current_instruction = load_register_instruction;
 
         vm.load();
 
@@ -1197,7 +1216,7 @@ mod tests {
 
         let load_address_instruction = (OpCode::OpLEA as u16) | ((R0 as u16) << 9) | 32;
 
-        vm.memory[vm.program_counter as usize] = load_address_instruction;
+        vm.current_instruction = load_address_instruction;
 
         vm.load_address();
 
@@ -1207,7 +1226,7 @@ mod tests {
 
         let load_address_instruction = (OpCode::OpLEA as u16) | ((R0 as u16) << 9) | 0b111111010; // 0b111111010 is -6 in two's complement with 9 bits
 
-        vm.memory[vm.program_counter as usize] = load_address_instruction;
+        vm.current_instruction = load_address_instruction;
 
         vm.load_address();
 
@@ -1217,7 +1236,7 @@ mod tests {
 
         let load_address_instruction = (OpCode::OpLEA as u16) | ((R0 as u16) << 9) | 0b111111010; // 0b11010 is -6 in two's complement with 9 bits
 
-        vm.memory[vm.program_counter as usize] = load_address_instruction;
+        vm.current_instruction = load_address_instruction;
 
         vm.load_address();
 
@@ -1233,7 +1252,7 @@ mod tests {
 
         let store_instruction = (OpCode::OpST as u16) | ((R0 as u16) << 9) | 32;
 
-        vm.memory[vm.program_counter as usize] = store_instruction;
+        vm.current_instruction = store_instruction;
 
         vm.store();
 
@@ -1268,7 +1287,7 @@ mod tests {
 
         let store_instruction = (OpCode::OpST as u16) | ((R0 as u16) << 9) | 10;
 
-        vm.memory[vm.program_counter as usize] = store_instruction;
+        vm.current_instruction = store_instruction;
 
         vm.store_indirect();
 
@@ -1301,7 +1320,7 @@ mod tests {
 
         let trap_halt_instruction = OpCode::OpTRAP as u16 | TrapHALT as u16;
 
-        vm.memory[vm.program_counter as usize] = trap_halt_instruction;
+        vm.current_instruction = trap_halt_instruction;
 
         vm.execute_trap_routine();
 
@@ -1316,7 +1335,7 @@ mod tests {
 
         vm.general_registers[R0] = 'T' as u16;
 
-        vm.memory[vm.program_counter as usize] = trap_out_instruction;
+        vm.current_instruction = trap_out_instruction;
 
         vm.execute_trap_routine();
 
@@ -1381,7 +1400,7 @@ mod tests {
 
         let trap_putsp_instruction = OpCode::OpTRAP as u16 | TrapPUTSP as u16;
 
-        vm.memory[vm.program_counter as usize] = trap_putsp_instruction;
+        vm.current_instruction = trap_putsp_instruction;
 
         vm.execute_trap_routine();
     }
