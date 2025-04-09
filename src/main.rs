@@ -318,6 +318,7 @@ impl LC3VM {
         let offset = extend_sign_for_integer(instruction & 0x1FF, 9);
         self.general_registers[destination_register as usize] =
             self.program_counter.wrapping_add(offset);
+        self.update_flags(destination_register as usize);
     }
 
     /// Loads a value into a register from a location in memory. The address is an offset from the program counter
