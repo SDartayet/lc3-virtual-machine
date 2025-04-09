@@ -1244,6 +1244,94 @@ mod tests {
     }
 
     #[test]
+    fn load_indirect_works_correctly() {
+        let mut vm = LC3VM::new();
+
+        vm.program_counter = 10;
+
+        let load_indirect_instruction = (OpCode::OpLDI as u16) | ((R0 as u16) << 9) | 32;
+
+        vm.memory[42] = 43;
+        vm.memory[43] = 44;
+
+        vm.current_instruction = load_indirect_instruction;
+
+        vm.load_indirect();
+
+        assert_eq!(vm.general_registers[R0], 44);
+
+        vm.program_counter = 10;
+
+        vm.memory[42] = 43;
+        vm.memory[43] = 0xF000;
+
+        let load_indirect_instruction = (OpCode::OpLDI as u16) | ((R0 as u16) << 9) | 32; // 0b111111010 is -6 in two's complement with 9 bits
+
+        vm.current_instruction = load_indirect_instruction;
+
+        vm.load_indirect();
+
+        assert_eq!(vm.general_registers[R0], 0xF000);
+
+        vm.program_counter = 10;
+
+        let load_address_instruction = (OpCode::OpLDI as u16) | ((R0 as u16) << 9) | 32; // 0b11010 is -6 in two's complement with 9 bits
+
+        vm.memory[42] = 43;
+        vm.memory[43] = 0;
+
+        vm.current_instruction = load_address_instruction;
+
+        vm.load_indirect();
+
+        assert_eq!(vm.general_registers[R0], 0);
+    }
+
+    #[test]
+    fn load_indirect_updates_flags_correctly() {
+        let mut vm = LC3VM::new();
+
+        vm.program_counter = 10;
+
+        let load_indirect_instruction = (OpCode::OpLDI as u16) | ((R0 as u16) << 9) | 32;
+
+        vm.memory[42] = 43;
+        vm.memory[43] = 44;
+
+        vm.current_instruction = load_indirect_instruction;
+
+        vm.load_indirect();
+
+        assert!(vm.condition_flags & FlPos != 0);
+
+        vm.program_counter = 10;
+
+        vm.memory[42] = 43;
+        vm.memory[43] = 0xF000;
+
+        let load_indirect_instruction = (OpCode::OpLDI as u16) | ((R0 as u16) << 9) | 32; // 0b111111010 is -6 in two's complement with 9 bits
+
+        vm.current_instruction = load_indirect_instruction;
+
+        vm.load_indirect();
+
+        assert!(vm.condition_flags & FlNeg != 0);
+
+        vm.program_counter = 10;
+
+        let load_address_instruction = (OpCode::OpLDI as u16) | ((R0 as u16) << 9) | 32; // 0b11010 is -6 in two's complement with 9 bits
+
+        vm.memory[42] = 43;
+        vm.memory[43] = 0;
+
+        vm.current_instruction = load_address_instruction;
+
+        vm.load_indirect();
+
+        assert!(vm.condition_flags & FlZero != 0);
+    }
+
+    #[test]
     fn store_works_correctly() {
         let mut vm = LC3VM::new();
 
