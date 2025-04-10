@@ -20,6 +20,11 @@ const MEMORY_REGISTER_KEYBOARD_STATUS_ADDRESS: usize = 0xFE00;
 const MEMORY_REGISTER_KEYBOARD_DATA_ADDRESS: usize = 0xFE02;
 
 const THREE_BIT_MASK: u16 = 0b111;
+const FIVE_BIT_MASK: u16 = 0b11111;
+const SIX_BIT_MASK: u16 = 0b111111;
+const EIGHT_BIT_MASK: u16 = 0xFF;
+const NINE_BIT_MASK: u16 = 0x01FF;
+const TEN_BIT_MASK: u16 = 0x7FF;
 
 ///The registers the architecture contains.
 /// R0 to R7 are the general purpose registers. PC is the instruction pointer.
@@ -105,7 +110,7 @@ fn handle_interrupt(original_tio: &mut Termios) {
     exit(-2);
 }
 
-struct LC3VM {
+pub struct LC3VM {
     general_registers: [u16; 8],
     program_counter: u16,
     condition_flags: u16,
@@ -176,7 +181,7 @@ impl LC3VM {
             let source_register_2_number = (instruction & THREE_BIT_MASK) as usize;
             self.general_registers[source_register_2_number]
         } else {
-            let five_bit_immediate = instruction & 0b11111; // I filter the first 5 bits of the instruction, which contain the immediate, and set the rest to zero
+            let five_bit_immediate = instruction & FIVE_BIT_MASK; // I filter the first 5 bits of the instruction, which contain the immediate, and set the rest to zero
             extend_sign_for_integer(five_bit_immediate, 5)
         };
 
@@ -220,7 +225,7 @@ impl LC3VM {
             let source_register_2_number = (instruction & THREE_BIT_MASK) as usize;
             self.general_registers[source_register_2_number]
         } else {
-            let five_bit_immediate = instruction & 0b11111; // I filter the first 5 bits of the instruction, which contain the immediate, and set the rest to zero
+            let five_bit_immediate = instruction & FIVE_BIT_MASK; // I filter the first 5 bits of the instruction, which contain the immediate, and set the rest to zero
             extend_sign_for_integer(five_bit_immediate, 5)
         };
 
@@ -236,7 +241,7 @@ impl LC3VM {
         let instruction = self.current_instruction;
         //The 9 rightmost bits contain the offset I need to jump when the condition is true
         //ox1FF is 9 bits set to 1
-        let program_counter_offset = extend_sign_for_integer(instruction & 0x01FF, 9);
+        let program_counter_offset = extend_sign_for_integer(instruction & NINE_BIT_MASK, 9);
 
         //Starting left, bit 10 is that the condition is the positive flag being up, bit 11 is the zero one being up, and bit 12 the negative one
         //I shift 9 rightward and and the value with 0b111 to get the value of the three
@@ -275,7 +280,7 @@ impl LC3VM {
             let destination_register = ((instruction >> 6) & THREE_BIT_MASK) as usize;
             self.program_counter = self.general_registers[destination_register];
         } else {
-            let offset = extend_sign_for_integer(instruction & 0x7FF, 11); // 0x7FF consists of 11 bits of ones; I want to get the rightmost 11 bits which contain the offset
+            let offset = extend_sign_for_integer(instruction & TEN_BIT_MASK, 11); // 0x7FF consists of 11 bits of ones; I want to get the rightmost 11 bits which contain the offset
             self.program_counter = self.program_counter.wrapping_add(offset);
         }
     }
@@ -286,7 +291,7 @@ impl LC3VM {
         let instruction = self.current_instruction;
         //I "push" the bits for the register number to the rightmost position, and make all the other bits 0 by doing a bitwise AND with 0b111
         let destination_register = (instruction >> 9) & THREE_BIT_MASK;
-        let offset = extend_sign_for_integer(instruction & 0x1FF, 9);
+        let offset = extend_sign_for_integer(instruction & NINE_BIT_MASK, 9);
         self.general_registers[destination_register as usize] = self
             .read_memory_and_check_keyboard_input(
                 (self.program_counter.wrapping_add(offset)) as usize,
@@ -301,7 +306,7 @@ impl LC3VM {
         //I "push" the bits for the register number to the rightmost position, and make all the other bits 0 by doing a bitwise AND with 0b111
         let destination_register = (instruction >> 9) & THREE_BIT_MASK;
         let source_address_register = (instruction >> 6) & THREE_BIT_MASK;
-        let offset = extend_sign_for_integer(instruction & 0b111111, 6);
+        let offset = extend_sign_for_integer(instruction & FIVE_BIT_MASK, 6);
         self.general_registers[destination_register as usize] = self
             .read_memory_and_check_keyboard_input(
                 (self.general_registers[source_address_register as usize].wrapping_add(offset))
@@ -355,7 +360,7 @@ impl LC3VM {
         //I "push" the bits for the register number to the rightmost position, and make all the other bits 0 by doing a bitwise AND with 0b111
         let source_register = (instruction >> 9) & THREE_BIT_MASK;
         let base_address_register = (instruction >> 6) & THREE_BIT_MASK;
-        let offset = extend_sign_for_integer(instruction & 0b111111, 6);
+        let offset = extend_sign_for_integer(instruction & SIX_BIT_MASK, 6);
         self.memory[(self.general_registers[base_address_register as usize].wrapping_add(offset))
             as usize] = self.general_registers[source_register as usize];
     }
@@ -366,7 +371,7 @@ impl LC3VM {
         let instruction = self.current_instruction;
         //I "push" the bits for the register number to the rightmost position, and make all the other bits 0 by doing a bitwise AND with 0b111
         let source_register = (instruction >> 9) & THREE_BIT_MASK;
-        let offset = extend_sign_for_integer(instruction & 0b111111111, 9);
+        let offset = extend_sign_for_integer(instruction & NINE_BIT_MASK, 9);
         let address_to_store_in = self.read_memory_and_check_keyboard_input(
             (self.program_counter.wrapping_add(offset)) as usize,
         );
@@ -379,7 +384,7 @@ impl LC3VM {
     fn execute_trap_routine(&mut self) {
         self.general_registers[R7] = self.program_counter;
         let instruction = self.current_instruction;
-        let trap_code = TrapCode::from(instruction & 0xFF);
+        let trap_code = TrapCode::from(instruction & EIGHT_BIT_MASK);
         match trap_code {
             TrapPUTS => {
                 self.puts();
@@ -406,7 +411,7 @@ impl LC3VM {
     /// Starts reading string from the address pointed to by R0, and stops when it encounters a null character
     fn puts(&self) {
         let mut character_to_output =
-            (self.memory[self.general_registers[R0] as usize] & 0xFF) as u8 as char;
+            (self.memory[self.general_registers[R0] as usize] & EIGHT_BIT_MASK) as u8 as char;
         let mut offset: usize = 0;
         while character_to_output != char::from(0x0) {
             print!("{}", character_to_output);
@@ -428,7 +433,7 @@ impl LC3VM {
 
     /// Prints a single character, the address for which is contained in R0
     fn out(&mut self) {
-        print!("{}", (self.general_registers[R0] & 0xFF) as u8 as char);
+        print!("{}", (self.general_registers[R0] & EIGHT_BIT_MASK) as u8 as char);
         let Ok(_) = stdout().flush() else {
             panic!("Error writing to standard output in OUT");
         };
@@ -464,23 +469,23 @@ impl LC3VM {
     fn output_char8(&mut self) {
         let mut current_memory_value = self.memory[self.general_registers[R0] as usize];
 
-        let mut character_to_output = (current_memory_value & 0xFF) as u8 as char;
+        let mut character_to_output = (current_memory_value & EIGHT_BIT_MASK) as u8 as char;
 
         if character_to_output != char::from(0x0) {
             print!("{}", character_to_output);
-            character_to_output = ((current_memory_value >> 8) & 0xFF) as u8 as char;
+            character_to_output = ((current_memory_value >> 8) & EIGHT_BIT_MASK) as u8 as char;
             let mut offset: usize = 1;
             while character_to_output != char::from(0x0) {
                 print!("{}", character_to_output);
                 current_memory_value =
                     self.memory[(self.general_registers[R0] as usize).wrapping_add(offset)];
-                character_to_output = (current_memory_value & 0xFF) as u8 as char;
+                character_to_output = (current_memory_value & EIGHT_BIT_MASK) as u8 as char;
                 if character_to_output == char::from(0x0) {
                     break;
                 }
                 print!("{}", character_to_output);
                 offset += 1;
-                character_to_output = ((current_memory_value >> 8) & 0xFF) as u8 as char;
+                character_to_output = ((current_memory_value >> 8) & EIGHT_BIT_MASK) as u8 as char;
             }
         }
 
