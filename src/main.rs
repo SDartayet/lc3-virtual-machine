@@ -53,7 +53,7 @@ enum VMError {
     InvalidOpCode,
     InvalidTrapCode,
     TerminalIOAttributesGet,
-    TerminalIOAttributesSet
+    TerminalIOAttributesSet,
 }
 
 /// The opcodes for the instructions the architecture supports
@@ -160,23 +160,38 @@ impl LC3VM {
     }
 
     fn handle_error(&mut self, error_type: VMError) {
-
         self.running = false;
         let mut print_vm_state = false;
 
         match error_type {
-            VMError::InvalidOpCode => { println!("Invalid OpCode was provided"); print_vm_state = true; }
-            VMError::InvalidTrapCode => { println!("Invalid TrapCode was provided"); print_vm_state = true; }
-            VMError::TerminalIOAttributesGet => { println!("Error getting terminal io parameters"); }
-            VMError::TerminalIOAttributesSet => { println!("Error setting terminal io parameters"); }
+            VMError::InvalidOpCode => {
+                println!("Invalid OpCode was provided");
+                print_vm_state = true;
+            }
+            VMError::InvalidTrapCode => {
+                println!("Invalid TrapCode was provided");
+                print_vm_state = true;
+            }
+            VMError::TerminalIOAttributesGet => {
+                println!("Error getting terminal io parameters");
+            }
+            VMError::TerminalIOAttributesSet => {
+                println!("Error setting terminal io parameters");
+            }
         }
         if print_vm_state {
             println!("VM State at time of failure:");
             println!("Program counter: {}", self.program_counter);
-            println!("Instruction code: {:016b}", self.memory[self.program_counter as usize]) ;
+            println!(
+                "Instruction code: {:016b}",
+                self.memory[self.program_counter as usize]
+            );
             println!("Flag values: {}", self.condition_flags & THREE_BIT_MASK);
             for register_num in 0..=7 {
-                println!("Register {}: {}", register_num, self.general_registers[register_num]);
+                println!(
+                    "Register {}: {}",
+                    register_num, self.general_registers[register_num]
+                );
             }
         }
     }
@@ -201,10 +216,13 @@ impl LC3VM {
         self.current_instruction =
             self.read_memory_and_check_keyboard_input(self.program_counter as usize);
         let parse_result = OpCode::try_from(self.memory[self.program_counter as usize]);
-    
+
         match parse_result {
-            Ok(opcode) => { Ok(opcode) }
-            Err(error) => { self.handle_error(error); Err(error) }
+            Ok(opcode) => Ok(opcode),
+            Err(error) => {
+                self.handle_error(error);
+                Err(error)
+            }
         }
     }
 
@@ -224,7 +242,7 @@ impl LC3VM {
             OpST => self.store(),
             OpSTR => self.store_register(),
             OpSTI => self.store_indirect(),
-            OpTRAP =>self.execute_trap_routine(),
+            OpTRAP => self.execute_trap_routine(),
             OpLDI => self.load_indirect(),
         }
     }
@@ -453,10 +471,14 @@ impl LC3VM {
         let code_parse_result = TrapCode::try_from(instruction & EIGHT_BIT_MASK);
         let mut trap_code: TrapCode = TrapOUT;
         match code_parse_result {
-            Ok(code) => { trap_code = code; },
-            Err(error) => { self.handle_error(error); }
+            Ok(code) => {
+                trap_code = code;
+            }
+            Err(error) => {
+                self.handle_error(error);
+            }
         }
-        
+
         match trap_code {
             TrapPUTS => {
                 self.puts();
@@ -505,7 +527,10 @@ impl LC3VM {
 
     /// Prints a single character, the address for which is contained in R0
     fn out(&mut self) {
-        print!("{}", (self.general_registers[R0] & EIGHT_BIT_MASK) as u8 as char);
+        print!(
+            "{}",
+            (self.general_registers[R0] & EIGHT_BIT_MASK) as u8 as char
+        );
         let Ok(_) = stdout().flush() else {
             panic!("Error writing to standard output in OUT");
         };
@@ -591,7 +616,6 @@ impl LC3VM {
 }
 
 impl TryFrom<u16> for TrapCode {
-
     type Error = VMError;
 
     fn try_from(value: u16) -> Result<Self, Self::Error> {
@@ -602,15 +626,12 @@ impl TryFrom<u16> for TrapCode {
             0x23 => Ok(TrapIN),
             0x24 => Ok(TrapPUTSP),
             0x25 => Ok(TrapHALT),
-            _ => {
-                Err(VMError::InvalidTrapCode)
-            }
+            _ => Err(VMError::InvalidTrapCode),
         }
     }
 }
 
 impl TryFrom<u16> for OpCode {
-
     type Error = VMError;
     fn try_from(value: u16) -> Result<Self, Self::Error> {
         let value_opcode = value >> 12;
@@ -629,9 +650,7 @@ impl TryFrom<u16> for OpCode {
             0b1100 => Ok(OpJMP),
             0b1110 => Ok(OpLEA),
             0b1111 => Ok(OpTRAP),
-            _ => {
-                Err(VMError::InvalidOpCode)
-            }
+            _ => Err(VMError::InvalidOpCode),
         }
     }
 }
@@ -693,8 +712,7 @@ impl<T> IndexMut<GeneralPurposeRegister> for [T] {
 fn main() {
     let mut vm = LC3VM::new();
     if let Ok(mut original_tio) = Termios::from_fd(stdin().as_raw_fd()) {
-        
-            ctrlc::set_handler(move || {
+        ctrlc::set_handler(move || {
             handle_interrupt(&mut original_tio);
         })
         .expect("Error setting Ctrl-C handler");
@@ -702,7 +720,7 @@ fn main() {
         if let Err(error) = disable_input_buffering(&mut original_tio) {
             vm.handle_error(error);
         }
-        
+
         let args: Vec<String> = env::args().collect();
 
         if args.len() < 2 {
@@ -713,8 +731,8 @@ fn main() {
 
         for item in args.iter().skip(1) {
             let file_path = Path::new(&item);
-        
-                if !vm.read_image_file(file_path) {
+
+            if !vm.read_image_file(file_path) {
                 println!("failed to load image: {}", item);
                 exit(1);
             }
