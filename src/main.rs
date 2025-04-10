@@ -716,7 +716,7 @@ fn main() {
 
         if args.len() < 2 {
             /* show usage string */
-            println!("Usage: cargo run [image path 1] [image path 2]...");
+            println!("Usage: make run path=[path to binary]");
             exit(2);
         }
 
