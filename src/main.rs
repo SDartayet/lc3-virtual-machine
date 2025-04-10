@@ -46,8 +46,7 @@ enum TrapCode {
     TrapIN = 0x23,    /* get character from keyboard, echoed onto the terminal */
     TrapPUTSP = 0x24, /* output a byte string */
     TrapHALT = 0x25,  /* halt the program */
-}
-
+  
 #[derive(Copy, Clone, Debug)]
 enum VMError {
     InvalidOpCode,
@@ -741,6 +740,7 @@ fn main() {
         while vm.running {
             if let Ok(instruction_code) = vm.decode_instruction() {
                 vm.execute_instruction(instruction_code);
+
             }
         }
     } else {
