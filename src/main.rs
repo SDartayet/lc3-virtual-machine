@@ -19,6 +19,13 @@ const MAX_MEMORY_ADDRESS: usize = 1 << 16;
 const MEMORY_REGISTER_KEYBOARD_STATUS_ADDRESS: usize = 0xFE00;
 const MEMORY_REGISTER_KEYBOARD_DATA_ADDRESS: usize = 0xFE02;
 
+const THREE_BIT_MASK: u16 = 0b111;
+const FIVE_BIT_MASK: u16 = 0b11111;
+const SIX_BIT_MASK: u16 = 0b111111;
+const EIGHT_BIT_MASK: u16 = 0xFF;
+const NINE_BIT_MASK: u16 = 0x01FF;
+const TEN_BIT_MASK: u16 = 0x7FF;
+
 ///The registers the architecture contains.
 /// R0 to R7 are the general purpose registers. PC is the instruction pointer.
 /// RCOND is the flags register,
@@ -40,6 +47,13 @@ enum TrapCode {
     TrapPUTSP = 0x24, /* output a byte string */
     TrapHALT = 0x25,  /* halt the program */
 }
+#[derive(Copy, Clone, Debug)]
+enum VMError {
+    InvalidOpCode,
+    InvalidTrapCode,
+    TerminalIOAttributesGet,
+    TerminalIOAttributesSet,
+}
 
 /// The opcodes for the instructions the architecture supports
 #[derive(Debug)]
@@ -52,20 +66,18 @@ enum OpCode {
     OpAND = 0b0101 << 12,  /* bitwise and */
     OpLDR = 0b0110 << 12,  /* load register */
     OpSTR = 0b0111 << 12,  /* store register */
-    OpRTI,                 /* unused */
     OpNOT = 0b1001 << 12,  /* bitwise not */
     OpLDI = 0b1010 << 12,  /* load indirect */
     OpSTI = 0b1011 << 12,  /* store indirect */
     OpJMP = 0b1100 << 12,  /* jump */
-    OpRES,                 /* reserved (unused) */
     OpLEA = 0b1110 << 12,  /* load effective address */
     OpTRAP = 0b1111 << 12, /* execute trap */
 }
 
 enum Flag {
-    FlPos = 0b001,  /* Set when the result of the previous operation was positive */
-    FlZero = 0b010, /* Set when the result of the previous operation was zero */
-    FlNeg = 0b100,  /* Set when the result of the previous operation was negative */
+    Positive = 0b001, /* Set when the result of the previous operation was positive */
+    Zero = 0b010,     /* Set when the result of the previous operation was zero */
+    Negative = 0b100, /* Set when the result of the previous operation was negative */
 }
 
 fn extend_sign_for_integer(value: u16, value_bit_count: u16) -> u16 {
@@ -82,28 +94,30 @@ fn extend_sign_for_integer(value: u16, value_bit_count: u16) -> u16 {
     }
 }
 
-fn disable_input_buffering(original_tio: &mut Termios) {
-    tcgetattr(stdin().as_raw_fd(), original_tio);
+fn disable_input_buffering(original_tio: &mut Termios) -> Result<(), VMError> {
+    tcgetattr(stdin().as_raw_fd(), original_tio).map_err(|_| VMError::TerminalIOAttributesGet)?;
     let new_tio = original_tio;
     new_tio.c_lflag &= !ICANON & !ECHO;
-    tcsetattr(stdin().as_raw_fd(), TCSANOW, &new_tio);
+    tcsetattr(stdin().as_raw_fd(), TCSANOW, new_tio)
+        .map_err(|_| VMError::TerminalIOAttributesSet)?;
+    Ok(())
 }
 
-fn restore_input_buffering(original_tio: &mut Termios) {
-    tcsetattr(stdin().as_raw_fd(), TCSANOW, original_tio);
+fn restore_input_buffering(original_tio: &mut Termios) -> Result<(), VMError> {
+    tcsetattr(stdin().as_raw_fd(), TCSANOW, original_tio)
+        .map_err(|_| VMError::TerminalIOAttributesSet)
 }
 
-fn handle_interrupt(original_tio: &mut Termios) {
-    restore_input_buffering(original_tio);
-    print!("\n");
+fn handle_interrupt(original_tio: &mut Termios) -> Result<(), VMError> {
+    restore_input_buffering(original_tio).map_err(|_| VMError::TerminalIOAttributesSet)?;
     exit(-2);
 }
 
-struct LC3VM {
+pub struct LC3VM {
     general_registers: [u16; 8],
     program_counter: u16,
     condition_flags: u16,
-    memory: [u16; MAX_MEMORY_ADDRESS as usize],
+    memory: [u16; MAX_MEMORY_ADDRESS],
     running: bool,
     current_instruction: u16,
 }
@@ -114,7 +128,7 @@ impl LC3VM {
             general_registers: [0; 8],
             program_counter: 0x3000,
             condition_flags: 0,
-            memory: [0; MAX_MEMORY_ADDRESS as usize],
+            memory: [0; MAX_MEMORY_ADDRESS],
             running: true,
             current_instruction: 0,
         }
@@ -127,19 +141,58 @@ impl LC3VM {
         self.condition_flags = 0;
         let register_value = self.general_registers[register_number];
         if register_value == 0 {
-            self.condition_flags |= FlZero;
+            self.condition_flags |= Zero;
         } else if register_value & (1 << 15) != 0 {
             //In two's complement, if the first bit is one, the number is negative
-            self.condition_flags |= FlNeg;
+            self.condition_flags |= Negative;
         } else {
-            self.condition_flags |= FlPos;
+            self.condition_flags |= Positive;
+        }
+    }
+
+    fn handle_error(&mut self, error_type: VMError) {
+        self.running = false;
+        let mut print_vm_state = false;
+
+        match error_type {
+            VMError::InvalidOpCode => {
+                println!("Invalid OpCode was provided");
+                print_vm_state = true;
+            }
+            VMError::InvalidTrapCode => {
+                println!("Invalid TrapCode was provided");
+                print_vm_state = true;
+            }
+            VMError::TerminalIOAttributesGet => {
+                println!("Error getting terminal io parameters");
+            }
+            VMError::TerminalIOAttributesSet => {
+                println!("Error setting terminal io parameters");
+            }
+        }
+        if print_vm_state {
+            println!("VM State at time of failure:");
+            println!("Program counter: {}", self.program_counter);
+            println!(
+                "Instruction code: {:016b}",
+                self.memory[self.program_counter as usize]
+            );
+            println!("Flag values: {}", self.condition_flags & THREE_BIT_MASK);
+            for register_num in 0..=7 {
+                println!(
+                    "Register {}: {}",
+                    register_num, self.general_registers[register_num]
+                );
+            }
         }
     }
 
     fn read_memory_and_check_keyboard_input(&mut self, index: usize) -> u16 {
         if index == MEMORY_REGISTER_KEYBOARD_STATUS_ADDRESS {
             let mut input_buffer = [1; 1];
-            stdin().read_exact(&mut input_buffer);
+            let Ok(_) = stdin().read_exact(&mut input_buffer) else {
+                panic!("Error reading from standard input");
+            };
             if input_buffer[0] != 0 {
                 self.memory[MEMORY_REGISTER_KEYBOARD_STATUS_ADDRESS] = 1 << 15;
                 self.memory[MEMORY_REGISTER_KEYBOARD_DATA_ADDRESS] = input_buffer[0] as u16;
@@ -150,29 +203,62 @@ impl LC3VM {
         self.memory[index]
     }
 
+    fn decode_instruction(&mut self) -> Result<OpCode, VMError> {
+        self.current_instruction =
+            self.read_memory_and_check_keyboard_input(self.program_counter as usize);
+        let parse_result = OpCode::try_from(self.memory[self.program_counter as usize]);
+
+        match parse_result {
+            Ok(opcode) => Ok(opcode),
+            Err(error) => {
+                self.handle_error(error);
+                Err(error)
+            }
+        }
+    }
+
+    fn execute_instruction(&mut self, instruction_code: OpCode) {
+        self.program_counter = self.program_counter.wrapping_add(1);
+        //println!("{:?}", instruction_code);
+        match instruction_code {
+            OpADD => self.add(),
+            OpAND => self.and(),
+            OpNOT => self.not(),
+            OpBR => self.branch(),
+            OpJMP => self.jump(),
+            OpJSR => self.jump_register_or_offset(),
+            OpLD => self.load(),
+            OpLEA => self.load_address(),
+            OpLDR => self.load_register(),
+            OpST => self.store(),
+            OpSTR => self.store_register(),
+            OpSTI => self.store_indirect(),
+            OpTRAP => self.execute_trap_routine(),
+            OpLDI => self.load_indirect(),
+        }
+    }
+
     /// Implements the addition instruciton
     /// Instruction structure: OPCODE (4 bits) | Destination register (3 bits) | Source register 1 (3 bits) | Mode (immediate or another register, 1 bit) | [00 | Source register 2 (3 bits)] on mode 0 or a 5 bit value on mode 1
     fn add(&mut self) {
         let instruction = self.current_instruction;
         //I "push" the bits for the register number to the rightmost position, and make all the other bits 0 by doing a bitwise AND with 0b111
-        let source_register_1_number = ((instruction >> 6) & 0b111) as usize;
+        let source_register_1_number = ((instruction >> 6) & THREE_BIT_MASK) as usize;
 
         //Same as previously, but I need to shift right by 9 bits given there are 9 bits befrore the destination register
-        let destination_register_number = ((instruction >> 9) & 0b111) as usize;
+        let destination_register_number = ((instruction >> 9) & THREE_BIT_MASK) as usize;
 
         //Mode flag is just one bit, so the bitwise AND is with 0b1. If it's zero I use register mode, if one immediate mode
         let mode_flag = (instruction >> 5) & 0b1 == 0;
 
-        let second_operand: u16;
-
-        if mode_flag {
+        let second_operand = if mode_flag {
             // I get the number of the second register from the last 3 bits
-            let source_register_2_number = (instruction & 0b111) as usize;
-            second_operand = self.general_registers[source_register_2_number];
+            let source_register_2_number = (instruction & THREE_BIT_MASK) as usize;
+            self.general_registers[source_register_2_number]
         } else {
-            let five_bit_immediate = instruction & 0b11111; // I filter the first 5 bits of the instruction, which contain the immediate, and set the rest to zero
-            second_operand = extend_sign_for_integer(five_bit_immediate, 5);
-        }
+            let five_bit_immediate = instruction & FIVE_BIT_MASK; // I filter the first 5 bits of the instruction, which contain the immediate, and set the rest to zero
+            extend_sign_for_integer(five_bit_immediate, 5)
+        };
 
         //Wrapping add lets us recreate the way addition works in two's complement systems while keeping the values unsigned (for more generalization)
         self.general_registers[destination_register_number] =
@@ -186,10 +272,10 @@ impl LC3VM {
     fn not(&mut self) {
         let instruction = self.current_instruction;
         //I "push" the bits for the register number to the rightmost position, and make all the other bits 0 by doing a bitwise AND with 0b111
-        let source_register_number = ((instruction >> 6) & 0b111) as usize;
+        let source_register_number = ((instruction >> 6) & THREE_BIT_MASK) as usize;
 
         //Same as previously, but I need to shift right by 9 bits given there are 9 bits befrore the destination register
-        let destination_register_number = ((instruction >> 9) & 0b111) as usize;
+        let destination_register_number = ((instruction >> 9) & THREE_BIT_MASK) as usize;
 
         self.general_registers[destination_register_number] =
             !self.general_registers[source_register_number];
@@ -202,23 +288,22 @@ impl LC3VM {
     fn and(&mut self) {
         let instruction = self.current_instruction;
         //I "push" the bits for the register number to the rightmost position, and make all the other bits 0 by doing a bitwise AND with 0b111
-        let source_register_1_number = ((instruction >> 6) & 0b111) as usize;
+        let source_register_1_number = ((instruction >> 6) & THREE_BIT_MASK) as usize;
 
         //Same as previously, but I need to shift right by 9 bits given there are 9 bits befrore the destination register
-        let destination_register_number = ((instruction >> 9) & 0b111) as usize;
+        let destination_register_number = ((instruction >> 9) & THREE_BIT_MASK) as usize;
 
         //Mode flag is just one bit, so the bitwise AND is with 0b1. If it's zero I use register mode, if one immediate mode
         let mode_flag = (instruction >> 5) & 0b1 == 0;
 
-        let second_operand: u16;
-
-        if mode_flag {
-            let source_register_2_number = (instruction & 0b111) as usize;
-            second_operand = self.general_registers[source_register_2_number];
+        let second_operand = if mode_flag {
+            let source_register_2_number = (instruction & THREE_BIT_MASK) as usize;
+            self.general_registers[source_register_2_number]
         } else {
-            let five_bit_immediate = instruction & 0b11111; // I filter the first 5 bits of the instruction, which contain the immediate, and set the rest to zero
-            second_operand = extend_sign_for_integer(five_bit_immediate, 5);
-        }
+            let five_bit_immediate = instruction & FIVE_BIT_MASK; // I filter the first 5 bits of the instruction, which contain the immediate, and set the rest to zero
+            extend_sign_for_integer(five_bit_immediate, 5)
+        };
+
         self.general_registers[destination_register_number] =
             self.general_registers[source_register_1_number] & second_operand;
 
@@ -231,17 +316,16 @@ impl LC3VM {
         let instruction = self.current_instruction;
         //The 9 rightmost bits contain the offset I need to jump when the condition is true
         //ox1FF is 9 bits set to 1
-        let program_counter_offset = extend_sign_for_integer(instruction & 0x01FF, 9);
+        let program_counter_offset = extend_sign_for_integer(instruction & NINE_BIT_MASK, 9);
 
         //Starting left, bit 10 is that the condition is the positive flag being up, bit 11 is the zero one being up, and bit 12 the negative one
         //I shift 9 rightward and and the value with 0b111 to get the value of the three
-        let flag_values = (instruction >> 9) & 0b111;
-        let condition_flag_is_up: bool;
-        if flag_values == 0 {
-            condition_flag_is_up = false;
+        let flag_values = (instruction >> 9) & THREE_BIT_MASK;
+        let condition_flag_is_up = if flag_values != 0 {
+            self.condition_flags & flag_values != 0
         } else {
-            condition_flag_is_up = self.condition_flags & flag_values != 0;
-        }
+            false
+        };
 
         if condition_flag_is_up {
             self.program_counter = self.program_counter.wrapping_add(program_counter_offset);
@@ -253,7 +337,7 @@ impl LC3VM {
     fn jump(&mut self) {
         let instruction = self.current_instruction;
         //I get the destination register by skipping the filler zeroes and getting the three bits that come after that
-        let destination_register = ((instruction >> 6) & 0b111) as usize;
+        let destination_register = ((instruction >> 6) & THREE_BIT_MASK) as usize;
         self.program_counter = self.general_registers[destination_register];
     }
 
@@ -268,10 +352,10 @@ impl LC3VM {
 
         if is_register_mode {
             //I get the destination register by skipping the filler zeroes and getting the three bits that come after that
-            let destination_register = ((instruction >> 6) & 0b111) as usize;
+            let destination_register = ((instruction >> 6) & THREE_BIT_MASK) as usize;
             self.program_counter = self.general_registers[destination_register];
         } else {
-            let offset = extend_sign_for_integer(instruction & 0x7FF, 11); // 0x7FF consists of 11 bits of ones; I want to get the rightmost 11 bits which contain the offset
+            let offset = extend_sign_for_integer(instruction & TEN_BIT_MASK, 11); // 0x7FF consists of 11 bits of ones; I want to get the rightmost 11 bits which contain the offset
             self.program_counter = self.program_counter.wrapping_add(offset);
         }
     }
@@ -281,8 +365,8 @@ impl LC3VM {
     fn load(&mut self) {
         let instruction = self.current_instruction;
         //I "push" the bits for the register number to the rightmost position, and make all the other bits 0 by doing a bitwise AND with 0b111
-        let destination_register = (instruction >> 9) & 0b111;
-        let offset = extend_sign_for_integer(instruction & 0x1FF, 9);
+        let destination_register = (instruction >> 9) & THREE_BIT_MASK;
+        let offset = extend_sign_for_integer(instruction & NINE_BIT_MASK, 9);
         self.general_registers[destination_register as usize] = self
             .read_memory_and_check_keyboard_input(
                 (self.program_counter.wrapping_add(offset)) as usize,
@@ -295,9 +379,9 @@ impl LC3VM {
     fn load_register(&mut self) {
         let instruction = self.current_instruction;
         //I "push" the bits for the register number to the rightmost position, and make all the other bits 0 by doing a bitwise AND with 0b111
-        let destination_register = (instruction >> 9) & 0b111;
-        let source_address_register = (instruction >> 6) & 0b111;
-        let offset = extend_sign_for_integer(instruction & 0b111111, 6);
+        let destination_register = (instruction >> 9) & THREE_BIT_MASK;
+        let source_address_register = (instruction >> 6) & THREE_BIT_MASK;
+        let offset = extend_sign_for_integer(instruction & FIVE_BIT_MASK, 6);
         self.general_registers[destination_register as usize] = self
             .read_memory_and_check_keyboard_input(
                 (self.general_registers[source_address_register as usize].wrapping_add(offset))
@@ -311,7 +395,7 @@ impl LC3VM {
     fn load_address(&mut self) {
         let instruction = self.current_instruction;
         //I "push" the bits for the register number to the rightmost position, and make all the other bits 0 by doing a bitwise AND with 0b111
-        let destination_register = (instruction >> 9) & 0b111;
+        let destination_register = (instruction >> 9) & THREE_BIT_MASK;
         let offset = extend_sign_for_integer(instruction & 0x1FF, 9);
         self.general_registers[destination_register as usize] =
             self.program_counter.wrapping_add(offset);
@@ -323,7 +407,7 @@ impl LC3VM {
     fn load_indirect(&mut self) {
         let instruction = self.current_instruction;
         //I "push" the bits for the register number to the rightmost position, and make all the other bits 0 by doing a bitwise AND with 0b111
-        let destination_register = (instruction >> 9) & 0b111;
+        let destination_register = (instruction >> 9) & THREE_BIT_MASK;
         let offset = extend_sign_for_integer(instruction & 0x1FF, 9);
         let effective_address = self.read_memory_and_check_keyboard_input(
             self.program_counter.wrapping_add(offset) as usize,
@@ -338,7 +422,7 @@ impl LC3VM {
     fn store(&mut self) {
         let instruction = self.current_instruction;
         //I "push" the bits for the register number to the rightmost position, and make all the other bits 0 by doing a bitwise AND with 0b111
-        let source_register = (instruction >> 9) & 0b111;
+        let source_register = (instruction >> 9) & THREE_BIT_MASK;
         let offset = extend_sign_for_integer(instruction & 0x1FF, 9);
         self.memory[(self.program_counter.wrapping_add(offset)) as usize] =
             self.general_registers[source_register as usize];
@@ -349,9 +433,9 @@ impl LC3VM {
     fn store_register(&mut self) {
         let instruction = self.current_instruction;
         //I "push" the bits for the register number to the rightmost position, and make all the other bits 0 by doing a bitwise AND with 0b111
-        let source_register = (instruction >> 9) & 0b111;
-        let base_address_register = (instruction >> 6) & 0b111;
-        let offset = extend_sign_for_integer(instruction & 0b111111, 6);
+        let source_register = (instruction >> 9) & THREE_BIT_MASK;
+        let base_address_register = (instruction >> 6) & THREE_BIT_MASK;
+        let offset = extend_sign_for_integer(instruction & SIX_BIT_MASK, 6);
         self.memory[(self.general_registers[base_address_register as usize].wrapping_add(offset))
             as usize] = self.general_registers[source_register as usize];
     }
@@ -361,8 +445,8 @@ impl LC3VM {
     fn store_indirect(&mut self) {
         let instruction = self.current_instruction;
         //I "push" the bits for the register number to the rightmost position, and make all the other bits 0 by doing a bitwise AND with 0b111
-        let source_register = (instruction >> 9) & 0b111;
-        let offset = extend_sign_for_integer(instruction & 0b111111111, 9);
+        let source_register = (instruction >> 9) & THREE_BIT_MASK;
+        let offset = extend_sign_for_integer(instruction & NINE_BIT_MASK, 9);
         let address_to_store_in = self.read_memory_and_check_keyboard_input(
             (self.program_counter.wrapping_add(offset)) as usize,
         );
@@ -375,7 +459,17 @@ impl LC3VM {
     fn execute_trap_routine(&mut self) {
         self.general_registers[R7] = self.program_counter;
         let instruction = self.current_instruction;
-        let trap_code = TrapCode::from(instruction & 0xFF);
+        let code_parse_result = TrapCode::try_from(instruction & EIGHT_BIT_MASK);
+        let mut trap_code: TrapCode = TrapOUT;
+        match code_parse_result {
+            Ok(code) => {
+                trap_code = code;
+            }
+            Err(error) => {
+                self.handle_error(error);
+            }
+        }
+
         match trap_code {
             TrapPUTS => {
                 self.puts();
@@ -402,7 +496,7 @@ impl LC3VM {
     /// Starts reading string from the address pointed to by R0, and stops when it encounters a null character
     fn puts(&self) {
         let mut character_to_output =
-            (self.memory[self.general_registers[R0] as usize] & 0xFF) as u8 as char;
+            (self.memory[self.general_registers[R0] as usize] & EIGHT_BIT_MASK) as u8 as char;
         let mut offset: usize = 0;
         while character_to_output != char::from(0x0) {
             print!("{}", character_to_output);
@@ -411,7 +505,10 @@ impl LC3VM {
                 [(self.general_registers[R0] as usize).wrapping_add(offset)]
                 & 0xFF) as u8 as char;
         }
-        stdout().flush();
+
+        let Ok(_) = stdout().flush() else {
+            panic!("Error writing to standard output in PUTS");
+        };
     }
 
     /// Halts execution of the virtual machine, by changing running bit to zero
@@ -421,17 +518,26 @@ impl LC3VM {
 
     /// Prints a single character, the address for which is contained in R0
     fn out(&mut self) {
-        print!("{}", (self.general_registers[R0] & 0xFF) as u8 as char);
-        stdout().flush();
+        print!(
+            "{}",
+            (self.general_registers[R0] & EIGHT_BIT_MASK) as u8 as char
+        );
+        let Ok(_) = stdout().flush() else {
+            panic!("Error writing to standard output in OUT");
+        };
     }
 
     /// Takes a single character from stdin, prints it out on console and stores it in R0
     fn trap_in(&mut self) {
         println!("Enter a character: ");
         let mut character = [0; 1];
-        stdin().read_exact(&mut character);
+        let Ok(_) = stdin().read_exact(&mut character) else {
+            panic!("Error reading from standard input in IN");
+        };
         print!("{}", character[0]);
-        stdout().flush();
+        let Ok(_) = stdout().flush() else {
+            panic!("Error writing standard output in IN");
+        };
         self.general_registers[R0] = character[0] as u16;
         self.update_flags(R0 as usize);
     }
@@ -439,7 +545,9 @@ impl LC3VM {
     /// Takes a single character from stdin, and stores it in R0
     fn get_character(&mut self) {
         let mut character = [0; 1];
-        stdin().read_exact(&mut character);
+        let Ok(_) = stdin().read_exact(&mut character) else {
+            panic!("Error reading from standard input in GETC");
+        };
         self.general_registers[R0] = character[0] as u16;
         self.update_flags(0);
     }
@@ -449,41 +557,44 @@ impl LC3VM {
     fn output_char8(&mut self) {
         let mut current_memory_value = self.memory[self.general_registers[R0] as usize];
 
-        let mut character_to_output = (current_memory_value & 0xFF) as u8 as char;
+        let mut character_to_output = (current_memory_value & EIGHT_BIT_MASK) as u8 as char;
 
         if character_to_output != char::from(0x0) {
             print!("{}", character_to_output);
-            character_to_output = ((current_memory_value >> 8) & 0xFF) as u8 as char;
+            character_to_output = ((current_memory_value >> 8) & EIGHT_BIT_MASK) as u8 as char;
             let mut offset: usize = 1;
             while character_to_output != char::from(0x0) {
                 print!("{}", character_to_output);
                 current_memory_value =
                     self.memory[(self.general_registers[R0] as usize).wrapping_add(offset)];
-                character_to_output = (current_memory_value & 0xFF) as u8 as char;
+                character_to_output = (current_memory_value & EIGHT_BIT_MASK) as u8 as char;
                 if character_to_output == char::from(0x0) {
                     break;
                 }
                 print!("{}", character_to_output);
                 offset += 1;
-                character_to_output = ((current_memory_value >> 8) & 0xFF) as u8 as char;
+                character_to_output = ((current_memory_value >> 8) & EIGHT_BIT_MASK) as u8 as char;
             }
         }
-        stdout().flush();
+
+        let Ok(_) = stdout().flush() else {
+            panic!("Error writing to standard output in trap OUT.");
+        };
     }
 
     fn read_image_file(&mut self, file_path: &Path) -> bool {
         let image_file = File::open(file_path).unwrap();
         let mut file_bytestream = image_file.bytes();
 
-        let origin_address_byte_1 = file_bytestream.next().unwrap().unwrap() as u8;
-        let origin_address_byte_2 = file_bytestream.next().unwrap().unwrap() as u8;
+        let origin_address_byte_1 = file_bytestream.next().unwrap().unwrap();
+        let origin_address_byte_2 = file_bytestream.next().unwrap().unwrap();
 
         let origin_address = u16::from_be_bytes([origin_address_byte_1, origin_address_byte_2]);
         let mut offset = 0;
         let maximum_offset = MAX_MEMORY_ADDRESS - origin_address as usize;
 
         while let Some(Ok(byte_1)) = file_bytestream.next() {
-            let byte_2 = file_bytestream.next().unwrap().unwrap() as u8;
+            let byte_2 = file_bytestream.next().unwrap().unwrap();
             self.memory[(origin_address.wrapping_add(offset)) as usize] =
                 u16::from_be_bytes([byte_1, byte_2]);
             offset += 1;
@@ -495,43 +606,42 @@ impl LC3VM {
     }
 }
 
-impl From<u16> for TrapCode {
-    fn from(value: u16) -> Self {
+impl TryFrom<u16> for TrapCode {
+    type Error = VMError;
+
+    fn try_from(value: u16) -> Result<Self, Self::Error> {
         match value {
-            0x20 => TrapGETC,
-            0x21 => TrapOUT,
-            0x22 => TrapPUTS,
-            0x23 => TrapIN,
-            0x24 => TrapPUTSP,
-            0x25 => TrapHALT,
-            _ => {
-                panic!("Invalid trap code provided");
-            }
+            0x20 => Ok(TrapGETC),
+            0x21 => Ok(TrapOUT),
+            0x22 => Ok(TrapPUTS),
+            0x23 => Ok(TrapIN),
+            0x24 => Ok(TrapPUTSP),
+            0x25 => Ok(TrapHALT),
+            _ => Err(VMError::InvalidTrapCode),
         }
     }
 }
 
-impl From<u16> for OpCode {
-    fn from(value: u16) -> Self {
+impl TryFrom<u16> for OpCode {
+    type Error = VMError;
+    fn try_from(value: u16) -> Result<Self, Self::Error> {
         let value_opcode = value >> 12;
         match value_opcode {
-            0b0000 => OpBR,
-            0b0001 => OpADD,
-            0b0010 => OpLD,
-            0b0011 => OpST,
-            0b0100 => OpJSR,
-            0b0101 => OpAND,
-            0b0110 => OpLDR,
-            0b0111 => OpSTR,
-            0b1001 => OpNOT,
-            0b1010 => OpLDI,
-            0b1011 => OpSTI,
-            0b1100 => OpJMP,
-            0b1110 => OpLEA,
-            0b1111 => OpTRAP,
-            _ => {
-                panic!("Invalid OpCode provided");
-            }
+            0b0000 => Ok(OpBR),
+            0b0001 => Ok(OpADD),
+            0b0010 => Ok(OpLD),
+            0b0011 => Ok(OpST),
+            0b0100 => Ok(OpJSR),
+            0b0101 => Ok(OpAND),
+            0b0110 => Ok(OpLDR),
+            0b0111 => Ok(OpSTR),
+            0b1001 => Ok(OpNOT),
+            0b1010 => Ok(OpLDI),
+            0b1011 => Ok(OpSTI),
+            0b1100 => Ok(OpJMP),
+            0b1110 => Ok(OpLEA),
+            0b1111 => Ok(OpTRAP),
+            _ => Err(VMError::InvalidOpCode),
         }
     }
 }
@@ -591,55 +701,41 @@ impl<T> IndexMut<GeneralPurposeRegister> for [T] {
 }
 
 fn main() {
-    let mut original_tio = Termios::from_fd(stdin().as_raw_fd()).unwrap();
     let mut vm = LC3VM::new();
-    ctrlc::set_handler(move || {
-        handle_interrupt(&mut original_tio);
-    })
-    .expect("Error setting Ctrl-C handler");
+    if let Ok(mut original_tio) = Termios::from_fd(stdin().as_raw_fd()) {
+        ctrlc::set_handler(move || {
+            handle_interrupt(&mut original_tio);
+        })
+        .expect("Error setting Ctrl-C handler");
 
-    disable_input_buffering(&mut original_tio);
-    let args: Vec<String> = env::args().collect();
-
-    if args.len() < 2 {
-        /* show usage string */
-        print!("lc3 [image-file1] ...\n");
-        exit(2);
-    }
-
-    for j in 1..args.len() {
-        let file_path = Path::new(&args[j]);
-
-        if !vm.read_image_file(file_path) {
-            print!("failed to load image: {}\n", args[j]);
-            exit(1);
+        if let Err(error) = disable_input_buffering(&mut original_tio) {
+            vm.handle_error(error);
         }
-    }
-    while vm.running {
-        vm.current_instruction =
-            vm.read_memory_and_check_keyboard_input(vm.program_counter as usize);
-        let instruction_code = OpCode::from(vm.memory[vm.program_counter as usize]);
-        vm.program_counter = vm.program_counter.wrapping_add(1);
-        //println!("{:?}", instruction_code);
-        match instruction_code {
-            OpADD => vm.add(),
-            OpAND => vm.and(),
-            OpNOT => vm.not(),
-            OpBR => vm.branch(),
-            OpJMP => vm.jump(),
-            OpJSR => vm.jump_register_or_offset(),
-            OpLD => vm.load(),
-            OpLEA => vm.load_address(),
-            OpLDR => vm.load_register(),
-            OpST => vm.store(),
-            OpSTR => vm.store_register(),
-            OpSTI => vm.store_indirect(),
-            OpTRAP => vm.execute_trap_routine(),
-            OpLDI => vm.load_indirect(),
-            _ => {
-                panic!("Error: Invalid OpCode provided");
+
+        let args: Vec<String> = env::args().collect();
+
+        if args.len() < 2 {
+            /* show usage string */
+            println!("Usage: cargo run [image path 1] [image path 2]...");
+            exit(2);
+        }
+
+        for item in args.iter().skip(1) {
+            let file_path = Path::new(&item);
+
+            if !vm.read_image_file(file_path) {
+                println!("failed to load image: {}", item);
+                exit(1);
             }
         }
+
+        while vm.running {
+            if let Ok(instruction_code) = vm.decode_instruction() {
+                vm.execute_instruction(instruction_code);
+            }
+        }
+    } else {
+        vm.handle_error(VMError::TerminalIOAttributesGet);
     }
 }
 
@@ -726,7 +822,7 @@ mod tests {
 
         vm.add();
 
-        assert!(vm.condition_flags & FlNeg != 0);
+        assert!(vm.condition_flags & Negative != 0);
     }
 
     #[test]
@@ -742,7 +838,7 @@ mod tests {
 
         vm.add();
 
-        assert!(vm.condition_flags & FlZero != 0);
+        assert!(vm.condition_flags & Zero != 0);
     }
 
     #[test]
@@ -758,7 +854,7 @@ mod tests {
 
         vm.add();
 
-        assert!(vm.condition_flags & FlPos != 0);
+        assert!(vm.condition_flags & Positive != 0);
     }
 
     #[test]
@@ -807,7 +903,7 @@ mod tests {
 
         vm.and();
 
-        assert!(vm.condition_flags & FlNeg != 0);
+        assert!(vm.condition_flags & Negative != 0);
     }
 
     #[test]
@@ -823,7 +919,7 @@ mod tests {
 
         vm.and();
 
-        assert!(vm.condition_flags & FlZero != 0);
+        assert!(vm.condition_flags & Zero != 0);
     }
 
     #[test]
@@ -839,7 +935,7 @@ mod tests {
 
         vm.and();
 
-        assert!(vm.condition_flags & FlPos != 0);
+        assert!(vm.condition_flags & Positive != 0);
     }
 
     #[test]
@@ -869,7 +965,7 @@ mod tests {
 
         vm.not();
 
-        assert!(vm.condition_flags & FlNeg != 0);
+        assert!(vm.condition_flags & Negative != 0);
     }
 
     #[test]
@@ -884,7 +980,7 @@ mod tests {
 
         vm.not();
 
-        assert!(vm.condition_flags & FlZero != 0);
+        assert!(vm.condition_flags & Zero != 0);
     }
 
     #[test]
@@ -899,7 +995,7 @@ mod tests {
 
         vm.not();
 
-        assert!(vm.condition_flags & FlPos != 0);
+        assert!(vm.condition_flags & Positive != 0);
     }
 
     #[test]
@@ -1138,7 +1234,7 @@ mod tests {
 
         vm.load();
 
-        assert!(vm.condition_flags & FlPos != 0);
+        assert!(vm.condition_flags & Positive != 0);
 
         vm.memory[42] = 0;
         vm.program_counter = 10;
@@ -1149,7 +1245,7 @@ mod tests {
 
         vm.load();
 
-        assert!(vm.condition_flags & FlZero != 0);
+        assert!(vm.condition_flags & Zero != 0);
 
         vm.memory[42] = 0xF000;
         vm.program_counter = 10;
@@ -1160,7 +1256,7 @@ mod tests {
 
         vm.load();
 
-        assert!(vm.condition_flags & FlNeg != 0);
+        assert!(vm.condition_flags & Negative != 0);
     }
 
     #[test]
@@ -1178,7 +1274,7 @@ mod tests {
 
         vm.load_register();
 
-        assert!(vm.condition_flags & FlPos != 0);
+        assert!(vm.condition_flags & Positive != 0);
 
         vm.memory[42] = 0xF000;
         vm.program_counter = 10;
@@ -1191,7 +1287,7 @@ mod tests {
 
         vm.load_register();
 
-        assert!(vm.condition_flags & FlNeg != 0);
+        assert!(vm.condition_flags & Negative != 0);
 
         vm.memory[42] = 0;
         vm.program_counter = 10;
@@ -1202,7 +1298,7 @@ mod tests {
 
         vm.load();
 
-        assert!(vm.condition_flags & FlZero != 0);
+        assert!(vm.condition_flags & Zero != 0);
     }
 
     #[test]
@@ -1217,7 +1313,7 @@ mod tests {
 
         vm.load_address();
 
-        assert!(vm.condition_flags & FlPos != 0);
+        assert!(vm.condition_flags & Positive != 0);
 
         vm.program_counter = 5;
 
@@ -1227,7 +1323,7 @@ mod tests {
 
         vm.load_address();
 
-        assert!(vm.condition_flags & FlNeg != 0);
+        assert!(vm.condition_flags & Negative != 0);
 
         vm.program_counter = 6;
 
@@ -1237,7 +1333,7 @@ mod tests {
 
         vm.load_address();
 
-        assert!(vm.condition_flags & FlZero != 0);
+        assert!(vm.condition_flags & Zero != 0);
     }
 
     #[test]
@@ -1299,7 +1395,7 @@ mod tests {
 
         vm.load_indirect();
 
-        assert!(vm.condition_flags & FlPos != 0);
+        assert!(vm.condition_flags & Positive != 0);
 
         vm.program_counter = 10;
 
@@ -1312,7 +1408,7 @@ mod tests {
 
         vm.load_indirect();
 
-        assert!(vm.condition_flags & FlNeg != 0);
+        assert!(vm.condition_flags & Negative != 0);
 
         vm.program_counter = 10;
 
@@ -1325,7 +1421,7 @@ mod tests {
 
         vm.load_indirect();
 
-        assert!(vm.condition_flags & FlZero != 0);
+        assert!(vm.condition_flags & Zero != 0);
     }
 
     #[test]
@@ -1505,5 +1601,30 @@ mod tests {
         assert_eq!(text_array[1], 'e');
         assert_eq!(text_array[2], 's');
         assert_eq!(text_array[3], 't');
+    }
+
+    #[test]
+    fn invalid_opcode_is_handled() {
+        let mut vm = LC3VM::new();
+
+        let invalid_instruction = 0b1000 << 12;
+
+        vm.memory[vm.program_counter as usize] = invalid_instruction;
+        vm.decode_instruction();
+
+        assert!(!vm.running);
+    }
+
+    #[test]
+    fn invalid_trapcode_is_handled() {
+        let mut vm = LC3VM::new();
+
+        let invalid_instruction = 0b1111 << 12 | 0x19;
+
+        vm.memory[vm.program_counter as usize] = invalid_instruction;
+        let code: OpCode = vm.decode_instruction().unwrap();
+        vm.execute_instruction(code);
+
+        assert!(!vm.running);
     }
 }
