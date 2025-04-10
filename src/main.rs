@@ -740,7 +740,6 @@ fn main() {
         while vm.running {
             if let Ok(instruction_code) = vm.decode_instruction() {
                 vm.execute_instruction(instruction_code);
-
             }
         }
     } else {
