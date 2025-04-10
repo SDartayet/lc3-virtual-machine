@@ -48,6 +48,14 @@ enum TrapCode {
     TrapHALT = 0x25,  /* halt the program */
 }
 
+#[derive(Copy, Clone, Debug)]
+enum VMError {
+    InvalidOpCode,
+    InvalidTrapCode,
+    TerminalIOAttributesGet,
+    TerminalIOAttributesSet
+}
+
 /// The opcodes for the instructions the architecture supports
 #[derive(Debug)]
 enum OpCode {
@@ -87,25 +95,29 @@ fn extend_sign_for_integer(value: u16, value_bit_count: u16) -> u16 {
     }
 }
 
-fn disable_input_buffering(original_tio: &mut Termios) {
-    let Ok(_) = tcgetattr(stdin().as_raw_fd(), original_tio) else {
-        panic!("Error getting terminal attributes.");
-    };
+fn disable_input_buffering(original_tio: &mut Termios) -> Result<(), VMError> {
+    if let Err(_) = tcgetattr(stdin().as_raw_fd(), original_tio) {
+        return Err(VMError::TerminalIOAttributesGet);
+    }
     let new_tio = original_tio;
     new_tio.c_lflag &= !ICANON & !ECHO;
-    let Ok(_) = tcsetattr(stdin().as_raw_fd(), TCSANOW, new_tio) else {
-        panic!("Error setting terminal attributes.");
-    };
+    if let Err(_) = tcsetattr(stdin().as_raw_fd(), TCSANOW, new_tio) {
+        return Err(VMError::TerminalIOAttributesSet);
+    }
+    Ok(())
 }
 
-fn restore_input_buffering(original_tio: &mut Termios) {
-    let Ok(_) = tcsetattr(stdin().as_raw_fd(), TCSANOW, original_tio) else {
-        panic!("Error setting terminal attributes.");
+fn restore_input_buffering(original_tio: &mut Termios) -> Result<(), VMError> {
+    if let Err(_) = tcsetattr(stdin().as_raw_fd(), TCSANOW, original_tio) {
+        return Err(VMError::TerminalIOAttributesSet);
     };
+    Ok(())
 }
 
-fn handle_interrupt(original_tio: &mut Termios) {
-    restore_input_buffering(original_tio);
+fn handle_interrupt(original_tio: &mut Termios) -> Result<(), VMError> {
+    if let Err(error) = restore_input_buffering(original_tio) {
+        return Err(error);
+    }
     println!();
     exit(-2);
 }
@@ -147,6 +159,28 @@ impl LC3VM {
         }
     }
 
+    fn handle_error(&mut self, error_type: VMError) {
+
+        self.running = false;
+        let mut print_vm_state = false;
+
+        match error_type {
+            VMError::InvalidOpCode => { println!("Invalid OpCode was provided"); print_vm_state = true; }
+            VMError::InvalidTrapCode => { println!("Invalid TrapCode was provided"); print_vm_state = true; }
+            VMError::TerminalIOAttributesGet => { println!("Error getting terminal io parameters"); }
+            VMError::TerminalIOAttributesSet => { println!("Error setting terminal io parameters"); }
+        }
+        if print_vm_state {
+            println!("VM State at time of failure:");
+            println!("Program counter: {}", self.program_counter);
+            println!("Instruction code: {:016b}", self.memory[self.program_counter as usize]) ;
+            println!("Flag values: {}", self.condition_flags & THREE_BIT_MASK);
+            for register_num in 0..=7 {
+                println!("Register {}: {}", register_num, self.general_registers[register_num]);
+            }
+        }
+    }
+
     fn read_memory_and_check_keyboard_input(&mut self, index: usize) -> u16 {
         if index == MEMORY_REGISTER_KEYBOARD_STATUS_ADDRESS {
             let mut input_buffer = [1; 1];
@@ -161,6 +195,38 @@ impl LC3VM {
             }
         }
         self.memory[index]
+    }
+
+    fn decode_instruction(&mut self) -> Result<OpCode, VMError> {
+        self.current_instruction =
+            self.read_memory_and_check_keyboard_input(self.program_counter as usize);
+        let parse_result = OpCode::try_from(self.memory[self.program_counter as usize]);
+    
+        match parse_result {
+            Ok(opcode) => { Ok(opcode) }
+            Err(error) => { self.handle_error(error); Err(error) }
+        }
+    }
+
+    fn execute_instruction(&mut self, instruction_code: OpCode) {
+        self.program_counter = self.program_counter.wrapping_add(1);
+        //println!("{:?}", instruction_code);
+        match instruction_code {
+            OpADD => self.add(),
+            OpAND => self.and(),
+            OpNOT => self.not(),
+            OpBR => self.branch(),
+            OpJMP => self.jump(),
+            OpJSR => self.jump_register_or_offset(),
+            OpLD => self.load(),
+            OpLEA => self.load_address(),
+            OpLDR => self.load_register(),
+            OpST => self.store(),
+            OpSTR => self.store_register(),
+            OpSTI => self.store_indirect(),
+            OpTRAP =>self.execute_trap_routine(),
+            OpLDI => self.load_indirect(),
+        }
     }
 
     /// Implements the addition instruciton
@@ -384,7 +450,13 @@ impl LC3VM {
     fn execute_trap_routine(&mut self) {
         self.general_registers[R7] = self.program_counter;
         let instruction = self.current_instruction;
-        let trap_code = TrapCode::from(instruction & EIGHT_BIT_MASK);
+        let code_parse_result = TrapCode::try_from(instruction & EIGHT_BIT_MASK);
+        let mut trap_code: TrapCode = TrapOUT;
+        match code_parse_result {
+            Ok(code) => { trap_code = code; },
+            Err(error) => { self.handle_error(error); }
+        }
+        
         match trap_code {
             TrapPUTS => {
                 self.puts();
@@ -518,42 +590,47 @@ impl LC3VM {
     }
 }
 
-impl From<u16> for TrapCode {
-    fn from(value: u16) -> Self {
+impl TryFrom<u16> for TrapCode {
+
+    type Error = VMError;
+
+    fn try_from(value: u16) -> Result<Self, Self::Error> {
         match value {
-            0x20 => TrapGETC,
-            0x21 => TrapOUT,
-            0x22 => TrapPUTS,
-            0x23 => TrapIN,
-            0x24 => TrapPUTSP,
-            0x25 => TrapHALT,
+            0x20 => Ok(TrapGETC),
+            0x21 => Ok(TrapOUT),
+            0x22 => Ok(TrapPUTS),
+            0x23 => Ok(TrapIN),
+            0x24 => Ok(TrapPUTSP),
+            0x25 => Ok(TrapHALT),
             _ => {
-                panic!("Invalid trap code provided,");
+                Err(VMError::InvalidTrapCode)
             }
         }
     }
 }
 
-impl From<u16> for OpCode {
-    fn from(value: u16) -> Self {
+impl TryFrom<u16> for OpCode {
+
+    type Error = VMError;
+    fn try_from(value: u16) -> Result<Self, Self::Error> {
         let value_opcode = value >> 12;
         match value_opcode {
-            0b0000 => OpBR,
-            0b0001 => OpADD,
-            0b0010 => OpLD,
-            0b0011 => OpST,
-            0b0100 => OpJSR,
-            0b0101 => OpAND,
-            0b0110 => OpLDR,
-            0b0111 => OpSTR,
-            0b1001 => OpNOT,
-            0b1010 => OpLDI,
-            0b1011 => OpSTI,
-            0b1100 => OpJMP,
-            0b1110 => OpLEA,
-            0b1111 => OpTRAP,
+            0b0000 => Ok(OpBR),
+            0b0001 => Ok(OpADD),
+            0b0010 => Ok(OpLD),
+            0b0011 => Ok(OpST),
+            0b0100 => Ok(OpJSR),
+            0b0101 => Ok(OpAND),
+            0b0110 => Ok(OpLDR),
+            0b0111 => Ok(OpSTR),
+            0b1001 => Ok(OpNOT),
+            0b1010 => Ok(OpLDI),
+            0b1011 => Ok(OpSTI),
+            0b1100 => Ok(OpJMP),
+            0b1110 => Ok(OpLEA),
+            0b1111 => Ok(OpTRAP),
             _ => {
-                panic!("Invalid OpCode provided.");
+                Err(VMError::InvalidOpCode)
             }
         }
     }
@@ -614,53 +691,42 @@ impl<T> IndexMut<GeneralPurposeRegister> for [T] {
 }
 
 fn main() {
-    let mut original_tio = Termios::from_fd(stdin().as_raw_fd()).unwrap();
     let mut vm = LC3VM::new();
-    ctrlc::set_handler(move || {
-        handle_interrupt(&mut original_tio);
-    })
-    .expect("Error setting Ctrl-C handler");
+    if let Ok(mut original_tio) = Termios::from_fd(stdin().as_raw_fd()) {
+        
+            ctrlc::set_handler(move || {
+            handle_interrupt(&mut original_tio);
+        })
+        .expect("Error setting Ctrl-C handler");
 
-    disable_input_buffering(&mut original_tio);
-    let args: Vec<String> = env::args().collect();
-
-    //if args.len() < 2 {
-    //    /* show usage string */
-    //    println!("Usage: cargo run [image path 1] [image path 2]...");
-    //    exit(2);
-    //}
-//
-    //for item in args.iter().skip(1) {
-    //    let file_path = Path::new(&item);
-//
-    //    if !vm.read_image_file(file_path) {
-    //        println!("failed to load image: {}", item);
-    //        exit(1);
-    //    }
-    //}
-    vm.read_image_file(Path::new("./binaries/2048.obj"));
-    while vm.running {
-        vm.current_instruction =
-            vm.read_memory_and_check_keyboard_input(vm.program_counter as usize);
-        let instruction_code = OpCode::from(vm.memory[vm.program_counter as usize]);
-        vm.program_counter = vm.program_counter.wrapping_add(1);
-        //println!("{:?}", instruction_code);
-        match instruction_code {
-            OpADD => vm.add(),
-            OpAND => vm.and(),
-            OpNOT => vm.not(),
-            OpBR => vm.branch(),
-            OpJMP => vm.jump(),
-            OpJSR => vm.jump_register_or_offset(),
-            OpLD => vm.load(),
-            OpLEA => vm.load_address(),
-            OpLDR => vm.load_register(),
-            OpST => vm.store(),
-            OpSTR => vm.store_register(),
-            OpSTI => vm.store_indirect(),
-            OpTRAP => vm.execute_trap_routine(),
-            OpLDI => vm.load_indirect(),
+        if let Err(error) = disable_input_buffering(&mut original_tio) {
+            vm.handle_error(error);
         }
+        
+        let args: Vec<String> = env::args().collect();
+
+        if args.len() < 2 {
+            /* show usage string */
+            println!("Usage: cargo run [image path 1] [image path 2]...");
+            exit(2);
+        }
+
+        for item in args.iter().skip(1) {
+            let file_path = Path::new(&item);
+        
+                if !vm.read_image_file(file_path) {
+                println!("failed to load image: {}", item);
+                exit(1);
+            }
+        }
+
+        while vm.running {
+            if let Ok(instruction_code) = vm.decode_instruction() {
+                vm.execute_instruction(instruction_code);
+            }
+        }
+    } else {
+        vm.handle_error(VMError::TerminalIOAttributesGet);
     }
 }
 
@@ -1526,5 +1592,30 @@ mod tests {
         assert_eq!(text_array[1], 'e');
         assert_eq!(text_array[2], 's');
         assert_eq!(text_array[3], 't');
+    }
+
+    #[test]
+    fn invalid_opcode_is_handled() {
+        let mut vm = LC3VM::new();
+
+        let invalid_instruction = 0b1000 << 12;
+
+        vm.memory[vm.program_counter as usize] = invalid_instruction;
+        vm.decode_instruction();
+
+        assert!(!vm.running);
+    }
+
+    #[test]
+    fn invalid_trapcode_is_handled() {
+        let mut vm = LC3VM::new();
+
+        let invalid_instruction = 0b1111 << 12 | 0x19;
+
+        vm.memory[vm.program_counter as usize] = invalid_instruction;
+        let code: OpCode = vm.decode_instruction().unwrap();
+        vm.execute_instruction(code);
+
+        assert!(!vm.running);
     }
 }
