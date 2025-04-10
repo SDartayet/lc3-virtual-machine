@@ -46,7 +46,7 @@ enum TrapCode {
     TrapIN = 0x23,    /* get character from keyboard, echoed onto the terminal */
     TrapPUTSP = 0x24, /* output a byte string */
     TrapHALT = 0x25,  /* halt the program */
-  
+}
 #[derive(Copy, Clone, Debug)]
 enum VMError {
     InvalidOpCode,
