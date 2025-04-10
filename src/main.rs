@@ -112,9 +112,7 @@ fn restore_input_buffering(original_tio: &mut Termios) -> Result<(), VMError> {
 }
 
 fn handle_interrupt(original_tio: &mut Termios) -> Result<(), VMError> {
-    if let Err(error) = restore_input_buffering(original_tio) {
-        return Err(error);
-    }
+    restore_input_buffering(original_tio).map_err(|_| VMError::TerminalIOAttributesSet)?;
     exit(-2);
 }
 
