@@ -1,5 +1,5 @@
 run:
-	cargo run
+	cargo run $(path)
 build:
 	cargo build
 test:

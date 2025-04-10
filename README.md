@@ -12,7 +12,7 @@ The LC3 computer architecture is a simple computer architecture often used in un
 
 ### How-to
 
-You can run the VM with the command ```make run [binary one] [binary two]...``` with the paths to the chosen binaries
+You can run the VM with the command ```make run path=[path to binary]``` with the path to the lc3 binary you want to run.
 The binaries folder has a few sample ones. You can run them with ```make 2048``` and ```make rogue```.
 
 You can run the tests with the command ```make test```.
