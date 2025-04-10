@@ -624,20 +624,21 @@ fn main() {
     disable_input_buffering(&mut original_tio);
     let args: Vec<String> = env::args().collect();
 
-    if args.len() < 2 {
-        /* show usage string */
-        println!("Usage: cargo run [image path 1] [image path 2]...");
-        exit(2);
-    }
-
-    for item in args.iter().skip(1) {
-        let file_path = Path::new(&item);
-
-        if !vm.read_image_file(file_path) {
-            println!("failed to load image: {}", item);
-            exit(1);
-        }
-    }
+    //if args.len() < 2 {
+    //    /* show usage string */
+    //    println!("Usage: cargo run [image path 1] [image path 2]...");
+    //    exit(2);
+    //}
+//
+    //for item in args.iter().skip(1) {
+    //    let file_path = Path::new(&item);
+//
+    //    if !vm.read_image_file(file_path) {
+    //        println!("failed to load image: {}", item);
+    //        exit(1);
+    //    }
+    //}
+    vm.read_image_file(Path::new("./binaries/2048.obj"));
     while vm.running {
         vm.current_instruction =
             vm.read_memory_and_check_keyboard_input(vm.program_counter as usize);
