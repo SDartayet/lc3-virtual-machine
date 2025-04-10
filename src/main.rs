@@ -117,7 +117,6 @@ fn handle_interrupt(original_tio: &mut Termios) -> Result<(), VMError> {
     if let Err(error) = restore_input_buffering(original_tio) {
         return Err(error);
     }
-    println!();
     exit(-2);
 }
 
