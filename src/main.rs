@@ -95,14 +95,11 @@ fn extend_sign_for_integer(value: u16, value_bit_count: u16) -> u16 {
 }
 
 fn disable_input_buffering(original_tio: &mut Termios) -> Result<(), VMError> {
-    if let Err(_) = tcgetattr(stdin().as_raw_fd(), original_tio) {
-        return Err(VMError::TerminalIOAttributesGet);
-    }
+    tcgetattr(stdin().as_raw_fd(), original_tio).map_err(|_| VMError::TerminalIOAttributesGet)?;
     let new_tio = original_tio;
     new_tio.c_lflag &= !ICANON & !ECHO;
-    if let Err(_) = tcsetattr(stdin().as_raw_fd(), TCSANOW, new_tio) {
-        return Err(VMError::TerminalIOAttributesSet);
-    }
+    tcsetattr(stdin().as_raw_fd(), TCSANOW, new_tio)
+        .map_err(|_| VMError::TerminalIOAttributesSet)?;
     Ok(())
 }
 
