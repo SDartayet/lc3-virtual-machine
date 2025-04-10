@@ -107,10 +107,8 @@ fn disable_input_buffering(original_tio: &mut Termios) -> Result<(), VMError> {
 }
 
 fn restore_input_buffering(original_tio: &mut Termios) -> Result<(), VMError> {
-    if let Err(_) = tcsetattr(stdin().as_raw_fd(), TCSANOW, original_tio) {
-        return Err(VMError::TerminalIOAttributesSet);
-    };
-    Ok(())
+    tcsetattr(stdin().as_raw_fd(), TCSANOW, original_tio)
+        .map_err(|_| VMError::TerminalIOAttributesSet)
 }
 
 fn handle_interrupt(original_tio: &mut Termios) -> Result<(), VMError> {
