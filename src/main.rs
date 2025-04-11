@@ -164,10 +164,10 @@ impl LC3VM {
                 print_vm_state = true;
             }
             VMError::TerminalIOAttributesGet => {
-                println!("Error getting terminal io parameters");
+                println!("Error getting terminal IO parameters");
             }
             VMError::TerminalIOAttributesSet => {
-                println!("Error setting terminal io parameters");
+                println!("Error setting terminal IO parameters");
             }
         }
         if print_vm_state {
@@ -499,7 +499,7 @@ impl LC3VM {
             (self.memory[self.general_registers[R0] as usize] & EIGHT_BIT_MASK) as u8 as char;
         let mut offset: usize = 0;
         while character_to_output != char::from(0x0) {
-            print!("{}", character_to_output);
+            println!("{}", character_to_output);
             offset += 1;
             character_to_output = (self.memory
                 [(self.general_registers[R0] as usize).wrapping_add(offset)]
