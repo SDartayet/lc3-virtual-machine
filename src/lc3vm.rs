@@ -14,11 +14,11 @@ const MAX_MEMORY_ADDRESS: usize = 1 << 16;
 const MEMORY_REGISTER_KEYBOARD_STATUS_ADDRESS: usize = 0xFE00;
 const MEMORY_REGISTER_KEYBOARD_DATA_ADDRESS: usize = 0xFE02;
 
-const THREE_BIT_MASK: u16 = 0b111;
-const FIVE_BIT_MASK: u16 = 0b11111;
-const SIX_BIT_MASK: u16 = 0b111111;
+const THREE_BIT_MASK: u16 = 0x7;
+const FIVE_BIT_MASK: u16 = 0x1F;
+const SIX_BIT_MASK: u16 = 0x3F;
 const EIGHT_BIT_MASK: u16 = 0xFF;
-const NINE_BIT_MASK: u16 = 0x01FF;
+const NINE_BIT_MASK: u16 = 0x1FF;
 const TEN_BIT_MASK: u16 = 0x7FF;
 
 ///The registers the architecture contains.
