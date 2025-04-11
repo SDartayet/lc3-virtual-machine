@@ -1,6 +1,6 @@
 # LC3 Virtual Machine
 
-##An implementation of a VM for the LC3 architecture
+## An implementation of a VM for the LC3 architecture
 
 ### What's a VM?
 
