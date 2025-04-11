@@ -20,6 +20,6 @@ jobs:
     - name: Run tests
       run: cargo test --verbose
     - name: Run Clippy
-      run: cargo clippy -- -D
+      run: cargo clippy -- -D warnings
     - name: Format
       run: cargo fmt --all -- --check
