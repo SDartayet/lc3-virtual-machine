@@ -1,12 +1,17 @@
-use Flag::*;
-use GeneralPurposeRegister::*;
-use OpCode::*;
-use TrapCode::*;
 use std::{
     fs::File,
     io::{Read, Write, stdin, stdout},
     ops::{BitAnd, BitOr, BitOrAssign, Index, IndexMut},
     path::Path,
+};
+
+use crate::vm_utils::Flag::*;
+use crate::vm_utils::GeneralPurposeRegister::*;
+use crate::vm_utils::OpCode::*;
+use crate::vm_utils::TrapCode::*;
+use crate::{
+    vm_error::VMError,
+    vm_utils::{Flag, GeneralPurposeRegister, OpCode, TrapCode, extend_sign_for_integer},
 };
 
 //The number of memory addresses is 2^16
@@ -20,76 +25,6 @@ const SIX_BIT_MASK: u16 = 0x3F;
 const EIGHT_BIT_MASK: u16 = 0xFF;
 const NINE_BIT_MASK: u16 = 0x1FF;
 const TEN_BIT_MASK: u16 = 0x7FF;
-
-///The registers the architecture contains.
-/// R0 to R7 are the general purpose registers. PC is the instruction pointer.
-/// RCOND is the flags register,
-#[derive(Clone, Copy)]
-enum GeneralPurposeRegister {
-    R0 = 0,
-    R1 = 1,
-    R2 = 2,
-    R3 = 3,
-    R4 = 4,
-    R5 = 5,
-    R6 = 6,
-    R7 = 7,
-}
-enum TrapCode {
-    TrapGETC = 0x20,  /* get character from keyboard, not echoed onto the terminal */
-    TrapOUT = 0x21,   /* output a character */
-    TrapPUTS = 0x22,  /* output a word string */
-    TrapIN = 0x23,    /* get character from keyboard, echoed onto the terminal */
-    TrapPUTSP = 0x24, /* output a byte string */
-    TrapHALT = 0x25,  /* halt the program */
-}
-#[derive(Copy, Clone, Debug)]
-pub enum VMError {
-    InvalidOpCode(u8),
-    InvalidTrapCode(u8),
-    TerminalIOAttributesGet,
-    TerminalIOAttributesSet,
-    IOError,
-}
-
-/// The opcodes for the instructions the architecture supports
-#[derive(Debug, PartialEq, Eq)]
-pub enum OpCode {
-    OpBR = 0b0000 << 12,   /* branch */
-    OpADD = 0b0001 << 12,  /* add  */
-    OpLD = 0b0010 << 12,   /* load */
-    OpST = 0b0011 << 12,   /* store */
-    OpJSR = 0b0100 << 12,  /* jump register */
-    OpAND = 0b0101 << 12,  /* bitwise and */
-    OpLDR = 0b0110 << 12,  /* load register */
-    OpSTR = 0b0111 << 12,  /* store register */
-    OpNOT = 0b1001 << 12,  /* bitwise not */
-    OpLDI = 0b1010 << 12,  /* load indirect */
-    OpSTI = 0b1011 << 12,  /* store indirect */
-    OpJMP = 0b1100 << 12,  /* jump */
-    OpLEA = 0b1110 << 12,  /* load effective address */
-    OpTRAP = 0b1111 << 12, /* execute trap */
-}
-
-enum Flag {
-    Positive = 0b001, /* Set when the result of the previous operation was positive */
-    Zero = 0b010,     /* Set when the result of the previous operation was zero */
-    Negative = 0b100, /* Set when the result of the previous operation was negative */
-}
-
-fn extend_sign_for_integer(value: u16, value_bit_count: u16) -> u16 {
-    // If the first bit of the value is negative, because of how two's complement works, we need to extend it with ones unti lwe have 16 bits to preserve the sign
-    // I check if the first bit of the value is one, and if it is I extend it with ones, otherwise with zeroes
-    let is_immediate_negative = (value & (1 << (value_bit_count - 1))) != 0;
-    // If the sign extension is negative, I fill with 11 bits of 1, since 11+5 = 16. Otherwise I don't need to do anything because the filler would be zeroes
-    if is_immediate_negative {
-        // Doing a bitwise or between the sign extension I need and the immediate value I get the immediate with the sign extended
-        // The sign extension will be a series of ones left of an amount of zeroes equivalent to the bits of my current value
-        value | (0xFFFF << value_bit_count)
-    } else {
-        value
-    }
-}
 
 pub struct LC3VM {
     general_registers: [u16; 8],
@@ -468,14 +403,16 @@ impl LC3VM {
             }
         }
 
-        if let Err(_) = match trap_code {
+        if (match trap_code {
             TrapPUTS => self.puts(&mut stdout()),
             TrapHALT => self.halt(),
             TrapOUT => self.out(&mut stdout()),
             TrapIN => self.trap_in(&mut stdout(), &mut stdin()),
             TrapGETC => self.get_character(&mut stdin()),
             TrapPUTSP => self.output_char8(&mut stdout()),
-        } {
+        })
+        .is_err()
+        {
             self.handle_error(VMError::IOError);
         }
     }
@@ -490,7 +427,7 @@ impl LC3VM {
             (self.memory[self.general_registers[R0] as usize] & EIGHT_BIT_MASK) as u8;
         let mut offset: usize = 0;
         while character_to_output != 0 {
-            output_stream.write(&[character_to_output])?;
+            output_stream.write_all(&[character_to_output])?;
             offset += 1;
             character_to_output = (self.memory
                 [(self.general_registers[R0] as usize).wrapping_add(offset)]
@@ -511,7 +448,7 @@ impl LC3VM {
     where
         T: Write,
     {
-        output_stream.write(&[(self.general_registers[R0] & EIGHT_BIT_MASK) as u8])?;
+        output_stream.write_all(&[(self.general_registers[R0] & EIGHT_BIT_MASK) as u8])?;
         output_stream.flush()
     }
 
@@ -528,7 +465,7 @@ impl LC3VM {
         println!("Enter a character: ");
         let mut character = [0; 1];
         input_stream.read_exact(&mut character)?;
-        output_stream.write(&[character[0]])?;
+        output_stream.write_all(&[character[0]])?;
         output_stream.flush()?;
         self.general_registers[R0] = character[0] as u16;
         self.update_flags(R0);
@@ -558,18 +495,18 @@ impl LC3VM {
         let mut character_to_output = (current_memory_value & EIGHT_BIT_MASK) as u8;
 
         if character_to_output != 0 {
-            output_stream.write(&[character_to_output]);
+            output_stream.write_all(&[character_to_output])?;
             character_to_output = ((current_memory_value >> 8) & EIGHT_BIT_MASK) as u8;
             let mut offset: usize = 1;
             while character_to_output != 0 {
-                output_stream.write(&[character_to_output])?;
+                output_stream.write_all(&[character_to_output])?;
                 current_memory_value =
                     self.memory[(self.general_registers[R0] as usize).wrapping_add(offset)];
                 character_to_output = (current_memory_value & EIGHT_BIT_MASK) as u8;
                 if character_to_output == 0 {
                     break;
                 }
-                output_stream.write(&[character_to_output])?;
+                output_stream.write_all(&[character_to_output])?;
                 offset += 1;
                 character_to_output = ((current_memory_value >> 8) & EIGHT_BIT_MASK) as u8;
             }
@@ -713,9 +650,9 @@ impl<T> IndexMut<GeneralPurposeRegister> for [T] {
 
 #[cfg(test)]
 mod tests {
-    use std::io::IoSlice;
+    use crate::vm_utils;
+    use vm_utils::Flag::*;
 
-    use super::Flag::*;
     use super::*;
 
     #[test]

@@ -1,27 +1,13 @@
 use lc3vm::*;
 use std::{env, io::stdin, os::fd::AsRawFd, path::Path, process::exit};
-use termios::{ECHO, ICANON, TCSANOW, Termios, tcgetattr, tcsetattr};
+use terminal_utils::{disable_input_buffering, handle_interrupt};
+use termios::Termios;
+use vm_error::VMError;
 
 mod lc3vm;
-
-fn disable_input_buffering(original_tio: &mut Termios) -> Result<(), VMError> {
-    tcgetattr(stdin().as_raw_fd(), original_tio).map_err(|_| VMError::TerminalIOAttributesGet)?;
-    let new_tio = original_tio;
-    new_tio.c_lflag &= !ICANON & !ECHO;
-    tcsetattr(stdin().as_raw_fd(), TCSANOW, new_tio)
-        .map_err(|_| VMError::TerminalIOAttributesSet)?;
-    Ok(())
-}
-
-fn restore_input_buffering(original_tio: &mut Termios) -> Result<(), VMError> {
-    tcsetattr(stdin().as_raw_fd(), TCSANOW, original_tio)
-        .map_err(|_| VMError::TerminalIOAttributesSet)
-}
-
-fn handle_interrupt(original_tio: &mut Termios) -> Result<(), VMError> {
-    restore_input_buffering(original_tio).map_err(|_| VMError::TerminalIOAttributesSet)?;
-    exit(-2);
-}
+mod terminal_utils;
+mod vm_error;
+mod vm_utils;
 
 fn main() {
     let mut vm = LC3VM::new();
