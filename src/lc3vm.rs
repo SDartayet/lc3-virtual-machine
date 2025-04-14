@@ -53,7 +53,7 @@ pub enum VMError {
 }
 
 /// The opcodes for the instructions the architecture supports
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum OpCode {
     OpBR = 0b0000 << 12,   /* branch */
     OpADD = 0b0001 << 12,  /* add  */
@@ -1622,5 +1622,93 @@ mod tests {
         vm.execute_instruction(code);
 
         assert!(!vm.running);
+    }
+
+    #[test]
+    fn decode_instruction_works_correctly_for_each_instruction() {
+        let mut vm = LC3VM::new();
+        vm.memory[0x3000] = (OpADD as u16);
+
+        let opcode = vm.decode_instruction().unwrap();
+
+        assert_eq!(opcode, OpADD);
+
+        vm.memory[0x3000] = (OpAND as u16);
+
+        let opcode = vm.decode_instruction().unwrap();
+
+        assert_eq!(opcode, OpAND);
+
+        vm.memory[0x3000] = (OpNOT as u16);
+
+        let opcode = vm.decode_instruction().unwrap();
+
+        assert_eq!(opcode, OpNOT);
+
+        vm.memory[0x3000] = (OpJMP as u16);
+
+        let opcode = vm.decode_instruction().unwrap();
+
+        assert_eq!(opcode, OpJMP);
+
+        vm.memory[0x3000] = (OpBR as u16);
+
+        let opcode = vm.decode_instruction().unwrap();
+
+        assert_eq!(opcode, OpBR);
+
+        vm.memory[0x3000] = (OpJSR as u16);
+
+        let opcode = vm.decode_instruction().unwrap();
+
+        assert_eq!(opcode, OpJSR);
+
+        vm.memory[0x3000] = (OpLD as u16);
+
+        let opcode = vm.decode_instruction().unwrap();
+
+        assert_eq!(opcode, OpLD);
+
+        vm.memory[0x3000] = (OpLDR as u16);
+
+        let opcode = vm.decode_instruction().unwrap();
+
+        assert_eq!(opcode, OpLDR);
+
+        vm.memory[0x3000] = (OpLDI as u16);
+
+        let opcode = vm.decode_instruction().unwrap();
+
+        assert_eq!(opcode, OpLDI);
+
+        vm.memory[0x3000] = (OpST as u16);
+
+        let opcode = vm.decode_instruction().unwrap();
+
+        assert_eq!(opcode, OpST);
+
+        vm.memory[0x3000] = (OpSTI as u16);
+
+        let opcode = vm.decode_instruction().unwrap();
+
+        assert_eq!(opcode, OpSTI);
+
+        vm.memory[0x3000] = (OpSTR as u16);
+
+        let opcode = vm.decode_instruction().unwrap();
+
+        assert_eq!(opcode, OpSTR);
+
+        vm.memory[0x3000] = (OpLEA as u16);
+
+        let opcode = vm.decode_instruction().unwrap();
+
+        assert_eq!(opcode, OpLEA);
+
+        vm.memory[0x3000] = (OpTRAP as u16);
+
+        let opcode = vm.decode_instruction().unwrap();
+
+        assert_eq!(opcode, OpTRAP);
     }
 }
