@@ -25,6 +25,8 @@ const SIX_BIT_MASK: u16 = 0x3F;
 const EIGHT_BIT_MASK: u16 = 0xFF;
 const NINE_BIT_MASK: u16 = 0x1FF;
 const TEN_BIT_MASK: u16 = 0x7FF;
+const DESTINATION_REGISTER_OFFSET: u16 = 9;
+const SOURCE_REGISTER_OFFSET: u16 = 6;
 
 pub struct LC3VM {
     general_registers: [u16; 8],
@@ -164,11 +166,12 @@ impl LC3VM {
         let instruction = self.current_instruction;
         //I "push" the bits for the register number to the rightmost position, and make all the other bits 0 by doing a bitwise AND with 0b111
         let source_register_1_number =
-            GeneralPurposeRegister::from((instruction >> 6) & THREE_BIT_MASK);
+            GeneralPurposeRegister::from((instruction >> SOURCE_REGISTER_OFFSET) & THREE_BIT_MASK);
 
         //Same as previously, but I need to shift right by 9 bits given there are 9 bits befrore the destination register
-        let destination_register_number =
-            GeneralPurposeRegister::from((instruction >> 9) & THREE_BIT_MASK);
+        let destination_register_number = GeneralPurposeRegister::from(
+            (instruction >> DESTINATION_REGISTER_OFFSET) & THREE_BIT_MASK,
+        );
 
         //Mode flag is just one bit, so the bitwise AND is with 0b1. If it's zero I use register mode, if one immediate mode
         let mode_flag = (instruction >> 5) & 0b1 == 0;
@@ -195,11 +198,12 @@ impl LC3VM {
         let instruction = self.current_instruction;
         //I "push" the bits for the register number to the rightmost position, and make all the other bits 0 by doing a bitwise AND with 0b111
         let source_register_number =
-            GeneralPurposeRegister::from((instruction >> 6) & THREE_BIT_MASK);
+            GeneralPurposeRegister::from((instruction >> SOURCE_REGISTER_OFFSET) & THREE_BIT_MASK);
 
         //Same as previously, but I need to shift right by 9 bits given there are 9 bits befrore the destination register
-        let destination_register_number =
-            GeneralPurposeRegister::from((instruction >> 9) & THREE_BIT_MASK);
+        let destination_register_number = GeneralPurposeRegister::from(
+            (instruction >> DESTINATION_REGISTER_OFFSET) & THREE_BIT_MASK,
+        );
 
         self.general_registers[destination_register_number] =
             !self.general_registers[source_register_number];
@@ -212,11 +216,13 @@ impl LC3VM {
     fn and(&mut self) {
         let instruction = self.current_instruction;
         //I "push" the bits for the register number to the rightmost position, and make all the other bits 0 by doing a bitwise AND with 0b111
-        let source_register_1_number = ((instruction >> 6) & THREE_BIT_MASK) as usize;
+        let source_register_1_number =
+            ((instruction >> SOURCE_REGISTER_OFFSET) & THREE_BIT_MASK) as usize;
 
         //Same as previously, but I need to shift right by 9 bits given there are 9 bits befrore the destination register
-        let destination_register_number =
-            GeneralPurposeRegister::from((instruction >> 9) & THREE_BIT_MASK);
+        let destination_register_number = GeneralPurposeRegister::from(
+            (instruction >> DESTINATION_REGISTER_OFFSET) & THREE_BIT_MASK,
+        );
 
         //Mode flag is just one bit, so the bitwise AND is with 0b1. If it's zero I use register mode, if one immediate mode
         let mode_flag = (instruction >> 5) & 0b1 == 0;
@@ -245,7 +251,7 @@ impl LC3VM {
 
         //Starting left, bit 10 is that the condition is the positive flag being up, bit 11 is the zero one being up, and bit 12 the negative one
         //I shift 9 rightward and and the value with 0b111 to get the value of the three
-        let flag_values = (instruction >> 9) & THREE_BIT_MASK;
+        let flag_values = (instruction >> DESTINATION_REGISTER_OFFSET) & THREE_BIT_MASK;
         let condition_flag_is_up = if flag_values != 0 {
             self.condition_flags & flag_values != 0
         } else {
@@ -263,7 +269,7 @@ impl LC3VM {
         let instruction = self.current_instruction;
         //I get the destination register by skipping the filler zeroes and getting the three bits that come after that
         let destination_register =
-            GeneralPurposeRegister::from((instruction >> 6) & THREE_BIT_MASK);
+            GeneralPurposeRegister::from((instruction >> SOURCE_REGISTER_OFFSET) & THREE_BIT_MASK);
         self.program_counter = self.general_registers[destination_register];
     }
 
@@ -278,8 +284,9 @@ impl LC3VM {
 
         if is_register_mode {
             //I get the destination register by skipping the filler zeroes and getting the three bits that come after that
-            let destination_register =
-                GeneralPurposeRegister::from((instruction >> 6) & THREE_BIT_MASK);
+            let destination_register = GeneralPurposeRegister::from(
+                (instruction >> SOURCE_REGISTER_OFFSET) & THREE_BIT_MASK,
+            );
             self.program_counter = self.general_registers[destination_register];
         } else {
             let offset = extend_sign_for_integer(instruction & TEN_BIT_MASK, 11); // 0x7FF consists of 11 bits of ones; I want to get the rightmost 11 bits which contain the offset
@@ -292,8 +299,9 @@ impl LC3VM {
     fn load(&mut self) {
         let instruction = self.current_instruction;
         //I "push" the bits for the register number to the rightmost position, and make all the other bits 0 by doing a bitwise AND with 0b111
-        let destination_register =
-            GeneralPurposeRegister::from((instruction >> 9) & THREE_BIT_MASK);
+        let destination_register = GeneralPurposeRegister::from(
+            (instruction >> DESTINATION_REGISTER_OFFSET) & THREE_BIT_MASK,
+        );
         let offset = extend_sign_for_integer(instruction & NINE_BIT_MASK, 9);
         self.general_registers[destination_register as usize] = self
             .read_memory_and_check_keyboard_input(
@@ -307,10 +315,11 @@ impl LC3VM {
     fn load_register(&mut self) {
         let instruction = self.current_instruction;
         //I "push" the bits for the register number to the rightmost position, and make all the other bits 0 by doing a bitwise AND with 0b111
-        let destination_register =
-            GeneralPurposeRegister::from((instruction >> 9) & THREE_BIT_MASK);
+        let destination_register = GeneralPurposeRegister::from(
+            (instruction >> DESTINATION_REGISTER_OFFSET) & THREE_BIT_MASK,
+        );
         let source_address_register =
-            GeneralPurposeRegister::from((instruction >> 6) & THREE_BIT_MASK);
+            GeneralPurposeRegister::from((instruction >> SOURCE_REGISTER_OFFSET) & THREE_BIT_MASK);
         let offset = extend_sign_for_integer(instruction & FIVE_BIT_MASK, 6);
         self.general_registers[destination_register as usize] = self
             .read_memory_and_check_keyboard_input(
@@ -325,8 +334,9 @@ impl LC3VM {
     fn load_address(&mut self) {
         let instruction = self.current_instruction;
         //I "push" the bits for the register number to the rightmost position, and make all the other bits 0 by doing a bitwise AND with 0b111
-        let destination_register =
-            GeneralPurposeRegister::from((instruction >> 9) & THREE_BIT_MASK);
+        let destination_register = GeneralPurposeRegister::from(
+            (instruction >> DESTINATION_REGISTER_OFFSET) & THREE_BIT_MASK,
+        );
         let offset = extend_sign_for_integer(instruction & 0x1FF, 9);
         self.general_registers[destination_register as usize] =
             self.program_counter.wrapping_add(offset);
@@ -338,8 +348,9 @@ impl LC3VM {
     fn load_indirect(&mut self) {
         let instruction = self.current_instruction;
         //I "push" the bits for the register number to the rightmost position, and make all the other bits 0 by doing a bitwise AND with 0b111
-        let destination_register =
-            GeneralPurposeRegister::from((instruction >> 9) & THREE_BIT_MASK);
+        let destination_register = GeneralPurposeRegister::from(
+            (instruction >> DESTINATION_REGISTER_OFFSET) & THREE_BIT_MASK,
+        );
         let offset = extend_sign_for_integer(instruction & 0x1FF, 9);
         let effective_address = self.read_memory_and_check_keyboard_input(
             self.program_counter.wrapping_add(offset) as usize,
@@ -354,7 +365,9 @@ impl LC3VM {
     fn store(&mut self) {
         let instruction = self.current_instruction;
         //I "push" the bits for the register number to the rightmost position, and make all the other bits 0 by doing a bitwise AND with 0b111
-        let source_register = GeneralPurposeRegister::from((instruction >> 9) & THREE_BIT_MASK);
+        let source_register = GeneralPurposeRegister::from(
+            (instruction >> DESTINATION_REGISTER_OFFSET) & THREE_BIT_MASK,
+        );
         let offset = extend_sign_for_integer(instruction & 0x1FF, 9);
         self.memory[(self.program_counter.wrapping_add(offset)) as usize] =
             self.general_registers[source_register];
@@ -365,9 +378,11 @@ impl LC3VM {
     fn store_register(&mut self) {
         let instruction = self.current_instruction;
         //I "push" the bits for the register number to the rightmost position, and make all the other bits 0 by doing a bitwise AND with 0b111
-        let source_register = GeneralPurposeRegister::from((instruction >> 9) & THREE_BIT_MASK);
+        let source_register = GeneralPurposeRegister::from(
+            (instruction >> DESTINATION_REGISTER_OFFSET) & THREE_BIT_MASK,
+        );
         let base_address_register =
-            GeneralPurposeRegister::from((instruction >> 6) & THREE_BIT_MASK);
+            GeneralPurposeRegister::from((instruction >> SOURCE_REGISTER_OFFSET) & THREE_BIT_MASK);
         let offset = extend_sign_for_integer(instruction & SIX_BIT_MASK, 6);
         self.memory[(self.general_registers[base_address_register as usize].wrapping_add(offset))
             as usize] = self.general_registers[source_register as usize];
@@ -378,7 +393,9 @@ impl LC3VM {
     fn store_indirect(&mut self) {
         let instruction = self.current_instruction;
         //I "push" the bits for the register number to the rightmost position, and make all the other bits 0 by doing a bitwise AND with 0b111
-        let source_register = GeneralPurposeRegister::from((instruction >> 9) & THREE_BIT_MASK);
+        let source_register = GeneralPurposeRegister::from(
+            (instruction >> DESTINATION_REGISTER_OFFSET) & THREE_BIT_MASK,
+        );
         let offset = extend_sign_for_integer(instruction & NINE_BIT_MASK, 9);
         let address_to_store_in = self.read_memory_and_check_keyboard_input(
             (self.program_counter.wrapping_add(offset)) as usize,
@@ -452,7 +469,7 @@ impl LC3VM {
         output_stream.flush()
     }
 
-    /// Takes a single character from stdin, prints it out on console and stores it in R0
+    /// Takes a single character from input, prints it out on console and stores it in R0
     fn trap_in<T, S>(
         &mut self,
         output_stream: &mut T,
@@ -472,7 +489,7 @@ impl LC3VM {
         Ok(())
     }
 
-    /// Takes a single character from stdin, and stores it in R0
+    /// Takes a single character from input, and stores it in R0
     fn get_character<T>(&mut self, input_stream: &mut T) -> Result<(), std::io::Error>
     where
         T: Read,
@@ -662,8 +679,10 @@ mod tests {
         vm.general_registers[R0] = 5;
         vm.general_registers[R1] = 4;
 
-        let add_instruction =
-            (OpCode::OpADD as u16) | ((R2 as u16) << 9) | ((R1 as u16) << 6) | R0 as u16;
+        let add_instruction = (OpCode::OpADD as u16)
+            | ((R2 as u16) << DESTINATION_REGISTER_OFFSET)
+            | ((R1 as u16) << SOURCE_REGISTER_OFFSET)
+            | R0 as u16;
 
         vm.current_instruction = add_instruction;
 
@@ -678,8 +697,11 @@ mod tests {
 
         vm.general_registers[R1] = 5;
 
-        let add_instruction =
-            (OpCode::OpADD as u16) | ((R2 as u16) << 9) | ((R1 as u16) << 6) | (1 << 5) | 4;
+        let add_instruction = (OpCode::OpADD as u16)
+            | ((R2 as u16) << DESTINATION_REGISTER_OFFSET)
+            | ((R1 as u16) << SOURCE_REGISTER_OFFSET)
+            | (1 << 5)
+            | 4;
 
         vm.current_instruction = add_instruction;
 
@@ -694,8 +716,11 @@ mod tests {
 
         vm.general_registers[R1] = 5;
 
-        let add_instruction =
-            (OpCode::OpADD as u16) | ((R2 as u16) << 9) | ((R1 as u16) << 6) | (1 << 5) | 0b11011; // 0b11111011 is -5 in two's complement
+        let add_instruction = (OpCode::OpADD as u16)
+            | ((R2 as u16) << DESTINATION_REGISTER_OFFSET)
+            | ((R1 as u16) << SOURCE_REGISTER_OFFSET)
+            | (1 << 5)
+            | 0b11011; // 0b11111011 is -5 in two's complement
 
         vm.current_instruction = add_instruction;
 
@@ -711,8 +736,10 @@ mod tests {
         vm.general_registers[R0] = 5;
         vm.general_registers[R1] = 0b1111111111111011; //-6 in two's complement
 
-        let add_instruction =
-            (OpCode::OpADD as u16) | ((R2 as u16) << 9) | ((R1 as u16) << 6) | R0 as u16;
+        let add_instruction = (OpCode::OpADD as u16)
+            | ((R2 as u16) << DESTINATION_REGISTER_OFFSET)
+            | ((R1 as u16) << SOURCE_REGISTER_OFFSET)
+            | R0 as u16;
         vm.current_instruction = add_instruction;
 
         vm.add();
@@ -726,8 +753,11 @@ mod tests {
 
         vm.general_registers[R1] = 5;
 
-        let add_instruction =
-            (OpCode::OpADD as u16) | ((R2 as u16) << 9) | ((R1 as u16) << 6) | (1 << 5) | 0b11010; // 0b11010 is -6 in two's complement with 5 bits
+        let add_instruction = (OpCode::OpADD as u16)
+            | ((R2 as u16) << DESTINATION_REGISTER_OFFSET)
+            | ((R1 as u16) << SOURCE_REGISTER_OFFSET)
+            | (1 << 5)
+            | 0b11010; // 0b11010 is -6 in two's complement with 5 bits
         vm.current_instruction = add_instruction;
 
         vm.add();
@@ -741,8 +771,11 @@ mod tests {
 
         vm.general_registers[R1] = 5;
 
-        let add_instruction =
-            (OpCode::OpADD as u16) | ((R2 as u16) << 9) | ((R1 as u16) << 6) | (1 << 5) | 0b11011; // 0b11011 is -5 in two's complement for a 5 bit value
+        let add_instruction = (OpCode::OpADD as u16)
+            | ((R2 as u16) << DESTINATION_REGISTER_OFFSET)
+            | ((R1 as u16) << SOURCE_REGISTER_OFFSET)
+            | (1 << 5)
+            | 0b11011; // 0b11011 is -5 in two's complement for a 5 bit value
 
         vm.current_instruction = add_instruction;
 
@@ -757,8 +790,11 @@ mod tests {
 
         vm.general_registers[R1] = 5;
 
-        let add_instruction =
-            (OpCode::OpADD as u16) | ((R2 as u16) << 9) | ((R1 as u16) << 6) | (1 << 5) | 0b1;
+        let add_instruction = (OpCode::OpADD as u16)
+            | ((R2 as u16) << DESTINATION_REGISTER_OFFSET)
+            | ((R1 as u16) << SOURCE_REGISTER_OFFSET)
+            | (1 << 5)
+            | 0b1;
 
         vm.current_instruction = add_instruction;
 
@@ -773,8 +809,11 @@ mod tests {
 
         vm.general_registers[R1] = 0b101;
 
-        let and_instruction =
-            (OpCode::OpAND as u16) | ((R2 as u16) << 9) | ((R1 as u16) << 6) | (1 << 5) | 0b01001;
+        let and_instruction = (OpCode::OpAND as u16)
+            | ((R2 as u16) << DESTINATION_REGISTER_OFFSET)
+            | ((R1 as u16) << SOURCE_REGISTER_OFFSET)
+            | (1 << 5)
+            | 0b01001;
 
         vm.current_instruction = and_instruction;
 
@@ -790,8 +829,10 @@ mod tests {
         vm.general_registers[R0] = 0b1001;
         vm.general_registers[R1] = 0b101;
 
-        let and_instruction =
-            (OpCode::OpAND as u16) | ((R2 as u16) << 9) | ((R1 as u16) << 6) | R0 as u16;
+        let and_instruction = (OpCode::OpAND as u16)
+            | ((R2 as u16) << DESTINATION_REGISTER_OFFSET)
+            | ((R1 as u16) << SOURCE_REGISTER_OFFSET)
+            | R0 as u16;
 
         vm.current_instruction = and_instruction;
 
@@ -806,8 +847,11 @@ mod tests {
 
         vm.general_registers[R1] = 0xF000;
 
-        let and_instruction =
-            (OpCode::OpADD as u16) | ((R2 as u16) << 9) | ((R1 as u16) << 6) | (1 << 5) | 0b11010; // 0b11111010 is -6 in two's complement
+        let and_instruction = (OpCode::OpADD as u16)
+            | ((R2 as u16) << DESTINATION_REGISTER_OFFSET)
+            | ((R1 as u16) << SOURCE_REGISTER_OFFSET)
+            | (1 << 5)
+            | 0b11010; // 0b11111010 is -6 in two's complement
 
         vm.current_instruction = and_instruction;
 
@@ -822,8 +866,11 @@ mod tests {
 
         vm.general_registers[R1] = 0;
 
-        let and_instruction =
-            (OpCode::OpADD as u16) | ((R2 as u16) << 9) | ((R1 as u16) << 6) | (1 << 5) | 0b00110; // 0b11011 is -5 in two's complement for a 5 bit value
+        let and_instruction = (OpCode::OpADD as u16)
+            | ((R2 as u16) << DESTINATION_REGISTER_OFFSET)
+            | ((R1 as u16) << SOURCE_REGISTER_OFFSET)
+            | (1 << 5)
+            | 0b00110; // 0b11011 is -5 in two's complement for a 5 bit value
 
         vm.current_instruction = and_instruction;
 
@@ -838,8 +885,11 @@ mod tests {
 
         vm.general_registers[R1] = 5;
 
-        let and_instruction =
-            (OpCode::OpADD as u16) | ((R2 as u16) << 9) | ((R1 as u16) << 6) | (1 << 5) | 0b1;
+        let and_instruction = (OpCode::OpADD as u16)
+            | ((R2 as u16) << DESTINATION_REGISTER_OFFSET)
+            | ((R1 as u16) << SOURCE_REGISTER_OFFSET)
+            | (1 << 5)
+            | 0b1;
 
         vm.current_instruction = and_instruction;
 
@@ -854,7 +904,9 @@ mod tests {
 
         vm.general_registers[R0] = 0xFFF0 | 0b1001;
 
-        let not_instruction = (OpCode::OpAND as u16) | ((R1 as u16) << 9) | ((R0 as u16) << 6);
+        let not_instruction = (OpCode::OpAND as u16)
+            | ((R1 as u16) << DESTINATION_REGISTER_OFFSET)
+            | ((R0 as u16) << SOURCE_REGISTER_OFFSET);
 
         vm.current_instruction = not_instruction;
 
@@ -869,7 +921,9 @@ mod tests {
 
         vm.general_registers[R0] = 0;
 
-        let not_instruction = (OpCode::OpADD as u16) | ((R1 as u16) << 9) | ((R0 as u16) << 6);
+        let not_instruction = (OpCode::OpADD as u16)
+            | ((R1 as u16) << DESTINATION_REGISTER_OFFSET)
+            | ((R0 as u16) << SOURCE_REGISTER_OFFSET);
 
         vm.current_instruction = not_instruction;
 
@@ -884,7 +938,9 @@ mod tests {
 
         vm.general_registers[R0] = 0xFFFF;
 
-        let not_instruction = (OpCode::OpADD as u16) | ((R1 as u16) << 9) | ((R0 as u16) << 6);
+        let not_instruction = (OpCode::OpADD as u16)
+            | ((R1 as u16) << DESTINATION_REGISTER_OFFSET)
+            | ((R0 as u16) << SOURCE_REGISTER_OFFSET);
 
         vm.current_instruction = not_instruction;
 
@@ -899,7 +955,9 @@ mod tests {
 
         vm.general_registers[R0] = 0xF000;
 
-        let not_instruction = (OpCode::OpADD as u16) | ((R1 as u16) << 9) | ((R0 as u16) << 6);
+        let not_instruction = (OpCode::OpADD as u16)
+            | ((R1 as u16) << DESTINATION_REGISTER_OFFSET)
+            | ((R0 as u16) << SOURCE_REGISTER_OFFSET);
 
         vm.current_instruction = not_instruction;
 
@@ -914,14 +972,17 @@ mod tests {
 
         vm.general_registers[R1] = 5;
 
-        let add_instruction =
-            (OpCode::OpADD as u16) | ((R2 as u16) << 9) | ((R1 as u16) << 6) | (1 << 5) | 0b11010; // 0b11010 is -6 in two's complement with 5 bits
+        let add_instruction = (OpCode::OpADD as u16)
+            | ((R2 as u16) << DESTINATION_REGISTER_OFFSET)
+            | ((R1 as u16) << SOURCE_REGISTER_OFFSET)
+            | (1 << 5)
+            | 0b11010; // 0b11010 is -6 in two's complement with 5 bits
 
         vm.current_instruction = add_instruction;
 
         vm.add();
 
-        let branch_instruction = (OpCode::OpBR as u16) | (0b100 << 9) | 2;
+        let branch_instruction = (OpCode::OpBR as u16) | (0b100 << DESTINATION_REGISTER_OFFSET) | 2;
 
         vm.current_instruction = branch_instruction;
 
@@ -936,14 +997,17 @@ mod tests {
 
         vm.general_registers[R1] = 6;
 
-        let add_instruction =
-            (OpCode::OpADD as u16) | ((R2 as u16) << 9) | ((R1 as u16) << 6) | (1 << 5) | 0b11010; // 0b11010 is -6 in two's complement with 5 bits
+        let add_instruction = (OpCode::OpADD as u16)
+            | ((R2 as u16) << DESTINATION_REGISTER_OFFSET)
+            | ((R1 as u16) << SOURCE_REGISTER_OFFSET)
+            | (1 << 5)
+            | 0b11010; // 0b11010 is -6 in two's complement with 5 bits
 
         vm.current_instruction = add_instruction;
 
         vm.add();
 
-        let branch_instruction = (OpCode::OpBR as u16) | (0b010 << 9) | 2;
+        let branch_instruction = (OpCode::OpBR as u16) | (0b010 << DESTINATION_REGISTER_OFFSET) | 2;
 
         vm.current_instruction = branch_instruction;
 
@@ -958,14 +1022,17 @@ mod tests {
 
         vm.general_registers[R1] = 7;
 
-        let add_instruction =
-            (OpCode::OpADD as u16) | ((R2 as u16) << 9) | ((R1 as u16) << 6) | (1 << 5) | 0b11010; // 0b11010 is -6 in two's complement with 5 bits
+        let add_instruction = (OpCode::OpADD as u16)
+            | ((R2 as u16) << DESTINATION_REGISTER_OFFSET)
+            | ((R1 as u16) << SOURCE_REGISTER_OFFSET)
+            | (1 << 5)
+            | 0b11010; // 0b11010 is -6 in two's complement with 5 bits
 
         vm.current_instruction = add_instruction;
 
         vm.add();
 
-        let branch_instruction = (OpCode::OpBR as u16) | (0b001 << 9) | 2;
+        let branch_instruction = (OpCode::OpBR as u16) | (0b001 << DESTINATION_REGISTER_OFFSET) | 2;
 
         vm.current_instruction = branch_instruction;
 
@@ -980,14 +1047,17 @@ mod tests {
 
         vm.general_registers[R1] = 7;
 
-        let add_instruction =
-            (OpCode::OpADD as u16) | ((R2 as u16) << 9) | ((R1 as u16) << 6) | (1 << 5) | 0b11010; // 0b11010 is -6 in two's complement with 5 bits
+        let add_instruction = (OpCode::OpADD as u16)
+            | ((R2 as u16) << DESTINATION_REGISTER_OFFSET)
+            | ((R1 as u16) << SOURCE_REGISTER_OFFSET)
+            | (1 << 5)
+            | 0b11010; // 0b11010 is -6 in two's complement with 5 bits
 
         vm.current_instruction = add_instruction;
 
         vm.add();
 
-        let branch_instruction = (OpCode::OpBR as u16) | (0b011 << 9) | 2;
+        let branch_instruction = (OpCode::OpBR as u16) | (0b011 << DESTINATION_REGISTER_OFFSET) | 2;
 
         vm.current_instruction = branch_instruction;
 
@@ -1002,14 +1072,17 @@ mod tests {
 
         vm.general_registers[R1] = 5;
 
-        let add_instruction =
-            (OpCode::OpADD as u16) | ((R2 as u16) << 9) | ((R1 as u16) << 6) | (1 << 5) | 0b11010; // 0b11010 is -6 in two's complement with 5 bits
+        let add_instruction = (OpCode::OpADD as u16)
+            | ((R2 as u16) << DESTINATION_REGISTER_OFFSET)
+            | ((R1 as u16) << SOURCE_REGISTER_OFFSET)
+            | (1 << 5)
+            | 0b11010; // 0b11010 is -6 in two's complement with 5 bits
 
         vm.current_instruction = add_instruction;
 
         vm.add();
 
-        let branch_instruction = (OpCode::OpBR as u16) | (0b101 << 9) | 2;
+        let branch_instruction = (OpCode::OpBR as u16) | (0b101 << DESTINATION_REGISTER_OFFSET) | 2;
 
         vm.current_instruction = branch_instruction;
 
@@ -1022,7 +1095,7 @@ mod tests {
     fn branch_instruction_doesnt_branch_with_no_flags() {
         let mut vm = LC3VM::new();
 
-        let branch_instruction = (OpCode::OpBR as u16) | (0b001 << 9) | 2;
+        let branch_instruction = (OpCode::OpBR as u16) | (0b001 << DESTINATION_REGISTER_OFFSET) | 2;
 
         vm.current_instruction = branch_instruction;
 
@@ -1037,7 +1110,9 @@ mod tests {
 
         vm.general_registers[R2] = 2;
 
-        let jump_instruction = (OpCode::OpJMP as u16) | (0b000 << 9) | ((R2 as u16) << 6);
+        let jump_instruction = (OpCode::OpJMP as u16)
+            | (0b000 << DESTINATION_REGISTER_OFFSET)
+            | ((R2 as u16) << SOURCE_REGISTER_OFFSET);
 
         vm.current_instruction = jump_instruction;
 
@@ -1070,7 +1145,7 @@ mod tests {
         vm.general_registers[R2] = 2;
         vm.program_counter = 10;
 
-        let jump_instruction = (OpCode::OpJSR as u16) | ((R2 as u16) << 6);
+        let jump_instruction = (OpCode::OpJSR as u16) | ((R2 as u16) << SOURCE_REGISTER_OFFSET);
 
         vm.current_instruction = jump_instruction;
 
@@ -1087,7 +1162,8 @@ mod tests {
         vm.memory[42] = 42;
         vm.program_counter = 10;
 
-        let load_instruction = (OpCode::OpLD as u16) | ((R0 as u16) << 9) | 32;
+        let load_instruction =
+            (OpCode::OpLD as u16) | ((R0 as u16) << DESTINATION_REGISTER_OFFSET) | 32;
 
         vm.current_instruction = load_instruction;
 
@@ -1105,8 +1181,10 @@ mod tests {
         vm.program_counter = 10;
         vm.general_registers[R1] = 11;
 
-        let load_register_instruction =
-            (OpCode::OpLDR as u16) | ((R0 as u16) << 9) | ((R1 as u16) << 6) | 31;
+        let load_register_instruction = (OpCode::OpLDR as u16)
+            | ((R0 as u16) << DESTINATION_REGISTER_OFFSET)
+            | ((R1 as u16) << SOURCE_REGISTER_OFFSET)
+            | 31;
 
         vm.current_instruction = load_register_instruction;
 
@@ -1121,7 +1199,8 @@ mod tests {
 
         vm.program_counter = 10;
 
-        let load_address_instruction = (OpCode::OpLEA as u16) | ((R0 as u16) << 9) | 32;
+        let load_address_instruction =
+            (OpCode::OpLEA as u16) | ((R0 as u16) << DESTINATION_REGISTER_OFFSET) | 32;
 
         vm.current_instruction = load_address_instruction;
 
@@ -1138,7 +1217,8 @@ mod tests {
         vm.memory[42] = 42;
         vm.program_counter = 10;
 
-        let load_instruction = (OpCode::OpLD as u16) | ((R0 as u16) << 9) | 32;
+        let load_instruction =
+            (OpCode::OpLD as u16) | ((R0 as u16) << DESTINATION_REGISTER_OFFSET) | 32;
 
         vm.current_instruction = load_instruction;
 
@@ -1149,7 +1229,8 @@ mod tests {
         vm.memory[42] = 0;
         vm.program_counter = 10;
 
-        let load_instruction = (OpCode::OpLD as u16) | ((R0 as u16) << 9) | 32;
+        let load_instruction =
+            (OpCode::OpLD as u16) | ((R0 as u16) << DESTINATION_REGISTER_OFFSET) | 32;
 
         vm.current_instruction = load_instruction;
 
@@ -1160,7 +1241,8 @@ mod tests {
         vm.memory[42] = 0xF000;
         vm.program_counter = 10;
 
-        let load_instruction = (OpCode::OpLD as u16) | ((R0 as u16) << 9) | 32;
+        let load_instruction =
+            (OpCode::OpLD as u16) | ((R0 as u16) << DESTINATION_REGISTER_OFFSET) | 32;
 
         vm.current_instruction = load_instruction;
 
@@ -1177,8 +1259,10 @@ mod tests {
         vm.program_counter = 10;
         vm.general_registers[R1] = 11;
 
-        let load_register_instruction =
-            (OpCode::OpLDR as u16) | ((R0 as u16) << 9) | ((R1 as u16) << 6) | 31;
+        let load_register_instruction = (OpCode::OpLDR as u16)
+            | ((R0 as u16) << DESTINATION_REGISTER_OFFSET)
+            | ((R1 as u16) << SOURCE_REGISTER_OFFSET)
+            | 31;
 
         vm.current_instruction = load_register_instruction;
 
@@ -1190,8 +1274,10 @@ mod tests {
         vm.program_counter = 10;
         vm.general_registers[R1] = 11;
 
-        let load_register_instruction =
-            (OpCode::OpLDR as u16) | ((R0 as u16) << 9) | ((R1 as u16) << 6) | 31;
+        let load_register_instruction = (OpCode::OpLDR as u16)
+            | ((R0 as u16) << DESTINATION_REGISTER_OFFSET)
+            | ((R1 as u16) << SOURCE_REGISTER_OFFSET)
+            | 31;
 
         vm.current_instruction = load_register_instruction;
 
@@ -1202,7 +1288,8 @@ mod tests {
         vm.memory[42] = 0;
         vm.program_counter = 10;
 
-        let load_instruction = (OpCode::OpLD as u16) | ((R0 as u16) << 9) | 32;
+        let load_instruction =
+            (OpCode::OpLD as u16) | ((R0 as u16) << DESTINATION_REGISTER_OFFSET) | 32;
 
         vm.current_instruction = load_register_instruction;
 
@@ -1217,7 +1304,8 @@ mod tests {
 
         vm.program_counter = 10;
 
-        let load_address_instruction = (OpCode::OpLEA as u16) | ((R0 as u16) << 9) | 32;
+        let load_address_instruction =
+            (OpCode::OpLEA as u16) | ((R0 as u16) << DESTINATION_REGISTER_OFFSET) | 32;
 
         vm.current_instruction = load_address_instruction;
 
@@ -1227,7 +1315,8 @@ mod tests {
 
         vm.program_counter = 5;
 
-        let load_address_instruction = (OpCode::OpLEA as u16) | ((R0 as u16) << 9) | 0b111111010; // 0b111111010 is -6 in two's complement with 9 bits
+        let load_address_instruction =
+            (OpCode::OpLEA as u16) | ((R0 as u16) << DESTINATION_REGISTER_OFFSET) | 0b111111010; // 0b111111010 is -6 in two's complement with 9 bits
 
         vm.current_instruction = load_address_instruction;
 
@@ -1237,7 +1326,8 @@ mod tests {
 
         vm.program_counter = 6;
 
-        let load_address_instruction = (OpCode::OpLEA as u16) | ((R0 as u16) << 9) | 0b111111010; // 0b11010 is -6 in two's complement with 9 bits
+        let load_address_instruction =
+            (OpCode::OpLEA as u16) | ((R0 as u16) << DESTINATION_REGISTER_OFFSET) | 0b111111010; // 0b11010 is -6 in two's complement with 9 bits
 
         vm.current_instruction = load_address_instruction;
 
@@ -1252,7 +1342,8 @@ mod tests {
 
         vm.program_counter = 10;
 
-        let load_indirect_instruction = (OpCode::OpLDI as u16) | ((R0 as u16) << 9) | 32;
+        let load_indirect_instruction =
+            (OpCode::OpLDI as u16) | ((R0 as u16) << DESTINATION_REGISTER_OFFSET) | 32;
 
         vm.memory[42] = 43;
         vm.memory[43] = 44;
@@ -1268,7 +1359,8 @@ mod tests {
         vm.memory[42] = 43;
         vm.memory[43] = 0xF000;
 
-        let load_indirect_instruction = (OpCode::OpLDI as u16) | ((R0 as u16) << 9) | 32; // 0b111111010 is -6 in two's complement with 9 bits
+        let load_indirect_instruction =
+            (OpCode::OpLDI as u16) | ((R0 as u16) << DESTINATION_REGISTER_OFFSET) | 32; // 0b111111010 is -6 in two's complement with 9 bits
 
         vm.current_instruction = load_indirect_instruction;
 
@@ -1278,7 +1370,8 @@ mod tests {
 
         vm.program_counter = 10;
 
-        let load_address_instruction = (OpCode::OpLDI as u16) | ((R0 as u16) << 9) | 32; // 0b11010 is -6 in two's complement with 9 bits
+        let load_address_instruction =
+            (OpCode::OpLDI as u16) | ((R0 as u16) << DESTINATION_REGISTER_OFFSET) | 32; // 0b11010 is -6 in two's complement with 9 bits
 
         vm.memory[42] = 43;
         vm.memory[43] = 0;
@@ -1296,7 +1389,8 @@ mod tests {
 
         vm.program_counter = 10;
 
-        let load_indirect_instruction = (OpCode::OpLDI as u16) | ((R0 as u16) << 9) | 32;
+        let load_indirect_instruction =
+            (OpCode::OpLDI as u16) | ((R0 as u16) << DESTINATION_REGISTER_OFFSET) | 32;
 
         vm.memory[42] = 43;
         vm.memory[43] = 44;
@@ -1312,7 +1406,8 @@ mod tests {
         vm.memory[42] = 43;
         vm.memory[43] = 0xF000;
 
-        let load_indirect_instruction = (OpCode::OpLDI as u16) | ((R0 as u16) << 9) | 32; // 0b111111010 is -6 in two's complement with 9 bits
+        let load_indirect_instruction =
+            (OpCode::OpLDI as u16) | ((R0 as u16) << DESTINATION_REGISTER_OFFSET) | 32; // 0b111111010 is -6 in two's complement with 9 bits
 
         vm.current_instruction = load_indirect_instruction;
 
@@ -1322,7 +1417,8 @@ mod tests {
 
         vm.program_counter = 10;
 
-        let load_address_instruction = (OpCode::OpLDI as u16) | ((R0 as u16) << 9) | 32; // 0b11010 is -6 in two's complement with 9 bits
+        let load_address_instruction =
+            (OpCode::OpLDI as u16) | ((R0 as u16) << DESTINATION_REGISTER_OFFSET) | 32; // 0b11010 is -6 in two's complement with 9 bits
 
         vm.memory[42] = 43;
         vm.memory[43] = 0;
@@ -1341,7 +1437,8 @@ mod tests {
         vm.general_registers[R0] = 42;
         vm.program_counter = 10;
 
-        let store_instruction = (OpCode::OpST as u16) | ((R0 as u16) << 9) | 32;
+        let store_instruction =
+            (OpCode::OpST as u16) | ((R0 as u16) << DESTINATION_REGISTER_OFFSET) | 32;
 
         vm.current_instruction = store_instruction;
 
@@ -1358,8 +1455,10 @@ mod tests {
         vm.general_registers[R0] = 42;
         vm.general_registers[R1] = 11;
 
-        let store_instruction =
-            (OpCode::OpST as u16) | ((R0 as u16) << 9) | ((R1 as u16) << 6) | 31;
+        let store_instruction = (OpCode::OpST as u16)
+            | ((R0 as u16) << DESTINATION_REGISTER_OFFSET)
+            | ((R1 as u16) << SOURCE_REGISTER_OFFSET)
+            | 31;
 
         vm.memory[vm.program_counter as usize] = store_instruction;
 
@@ -1376,7 +1475,8 @@ mod tests {
         vm.program_counter = 10;
         vm.memory[20] = 42;
 
-        let store_instruction = (OpCode::OpST as u16) | ((R0 as u16) << 9) | 10;
+        let store_instruction =
+            (OpCode::OpST as u16) | ((R0 as u16) << DESTINATION_REGISTER_OFFSET) | 10;
 
         vm.current_instruction = store_instruction;
 
