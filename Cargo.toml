@@ -1,0 +1,8 @@
+[package]
+name = "lc3-virtual-machine"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+ctrlc = "3.4"
+termios = "0.3"
