@@ -49,6 +49,7 @@ pub enum VMError {
     InvalidTrapCode(u8),
     TerminalIOAttributesGet,
     TerminalIOAttributesSet,
+    IOError,
 }
 
 /// The opcodes for the instructions the architecture supports
@@ -146,21 +147,28 @@ impl LC3VM {
             VMError::TerminalIOAttributesSet => {
                 println!("Error setting terminal IO parameters");
             }
+            VMError::IOError => {
+                println!("Error writing to stdout or reading from stdin");
+            }
         }
         if print_vm_state {
-            println!("VM State at time of failure:");
-            println!("Program counter: {}", self.program_counter);
+            self.output_vm_state();
+        }
+    }
+
+    pub fn output_vm_state(&self) {
+        println!("VM State at time of failure:");
+        println!("Program counter: {}", self.program_counter);
+        println!(
+            "Instruction code: {:016b}",
+            self.memory[self.program_counter as usize]
+        );
+        println!("Flag values: {}", self.condition_flags & THREE_BIT_MASK);
+        for register_num in 0..=7 {
             println!(
-                "Instruction code: {:016b}",
-                self.memory[self.program_counter as usize]
+                "Register {}: {}",
+                register_num, self.general_registers[register_num]
             );
-            println!("Flag values: {}", self.condition_flags & THREE_BIT_MASK);
-            for register_num in 0..=7 {
-                println!(
-                    "Register {}: {}",
-                    register_num, self.general_registers[register_num]
-                );
-            }
         }
     }
 
@@ -460,116 +468,114 @@ impl LC3VM {
             }
         }
 
-        match trap_code {
-            TrapPUTS => {
-                self.puts();
-            }
-            TrapHALT => {
-                self.halt();
-            }
-            TrapOUT => {
-                self.out();
-            }
-            TrapIN => {
-                self.trap_in();
-            }
-            TrapGETC => {
-                self.get_character();
-            }
-            TrapPUTSP => {
-                self.output_char8();
-            }
+        if let Err(_) = match trap_code {
+            TrapPUTS => self.puts(&mut stdout()),
+            TrapHALT => self.halt(),
+            TrapOUT => self.out(&mut stdout()),
+            TrapIN => self.trap_in(&mut stdout(), &mut stdin()),
+            TrapGETC => self.get_character(&mut stdin()),
+            TrapPUTSP => self.output_char8(&mut stdout()),
+        } {
+            self.handle_error(VMError::IOError);
         }
     }
 
     /// Outputs a string of characters, each one in a memory location
     /// Starts reading string from the address pointed to by R0, and stops when it encounters a null character
-    fn puts(&self) {
+    fn puts<T>(&self, output_stream: &mut T) -> Result<(), std::io::Error>
+    where
+        T: Write,
+    {
         let mut character_to_output =
-            (self.memory[self.general_registers[R0] as usize] & EIGHT_BIT_MASK) as u8 as char;
+            (self.memory[self.general_registers[R0] as usize] & EIGHT_BIT_MASK) as u8;
         let mut offset: usize = 0;
-        while character_to_output != char::from(0x0) {
-            print!("{}", character_to_output);
+        while character_to_output != 0 {
+            output_stream.write(&[character_to_output])?;
             offset += 1;
             character_to_output = (self.memory
                 [(self.general_registers[R0] as usize).wrapping_add(offset)]
-                & 0xFF) as u8 as char;
+                & 0xFF) as u8;
         }
 
-        let Ok(_) = stdout().flush() else {
-            panic!("Error writing to standard output in PUTS");
-        };
+        output_stream.flush()
     }
 
     /// Halts execution of the virtual machine, by changing running bit to zero
-    fn halt(&mut self) {
+    fn halt<E>(&mut self) -> Result<(), E> {
         self.running = false;
+        Ok(())
     }
 
     /// Prints a single character, the address for which is contained in R0
-    fn out(&mut self) {
-        print!(
-            "{}",
-            (self.general_registers[R0] & EIGHT_BIT_MASK) as u8 as char
-        );
-        let Ok(_) = stdout().flush() else {
-            panic!("Error writing to standard output in OUT");
-        };
+    fn out<T>(&mut self, output_stream: &mut T) -> Result<(), std::io::Error>
+    where
+        T: Write,
+    {
+        output_stream.write(&[(self.general_registers[R0] & EIGHT_BIT_MASK) as u8])?;
+        output_stream.flush()
     }
 
     /// Takes a single character from stdin, prints it out on console and stores it in R0
-    fn trap_in(&mut self) {
+    fn trap_in<T, S>(
+        &mut self,
+        output_stream: &mut T,
+        input_stream: &mut S,
+    ) -> Result<(), std::io::Error>
+    where
+        T: Write,
+        S: Read,
+    {
         println!("Enter a character: ");
         let mut character = [0; 1];
-        let Ok(_) = stdin().read_exact(&mut character) else {
-            panic!("Error reading from standard input in IN");
-        };
-        print!("{}", character[0]);
-        let Ok(_) = stdout().flush() else {
-            panic!("Error writing standard output in IN");
-        };
+        input_stream.read_exact(&mut character)?;
+        output_stream.write(&[character[0]])?;
+        output_stream.flush()?;
         self.general_registers[R0] = character[0] as u16;
         self.update_flags(R0);
+        Ok(())
     }
 
     /// Takes a single character from stdin, and stores it in R0
-    fn get_character(&mut self) {
+    fn get_character<T>(&mut self, input_stream: &mut T) -> Result<(), std::io::Error>
+    where
+        T: Read,
+    {
         let mut character = [0; 1];
-        let Ok(_) = stdin().read_exact(&mut character) else {
-            panic!("Error reading from standard input in GETC");
-        };
+        input_stream.read_exact(&mut character)?;
         self.general_registers[R0] = character[0] as u16;
         self.update_flags(R0);
+        Ok(())
     }
 
     /// Output a string of characters, each represented as 8 bits, two per memory address
     /// Starts reading string from the address pointed to by R0, and stops when it encounters a null characte
-    fn output_char8(&mut self) {
+    fn output_char8<T>(&mut self, output_stream: &mut T) -> Result<(), std::io::Error>
+    where
+        T: Write,
+    {
         let mut current_memory_value = self.memory[self.general_registers[R0] as usize];
 
-        let mut character_to_output = (current_memory_value & EIGHT_BIT_MASK) as u8 as char;
+        let mut character_to_output = (current_memory_value & EIGHT_BIT_MASK) as u8;
 
-        if character_to_output != char::from(0x0) {
-            print!("{}", character_to_output);
-            character_to_output = ((current_memory_value >> 8) & EIGHT_BIT_MASK) as u8 as char;
+        if character_to_output != 0 {
+            output_stream.write(&[character_to_output]);
+            character_to_output = ((current_memory_value >> 8) & EIGHT_BIT_MASK) as u8;
             let mut offset: usize = 1;
-            while character_to_output != char::from(0x0) {
-                print!("{}", character_to_output);
+            while character_to_output != 0 {
+                output_stream.write(&[character_to_output])?;
                 current_memory_value =
                     self.memory[(self.general_registers[R0] as usize).wrapping_add(offset)];
-                character_to_output = (current_memory_value & EIGHT_BIT_MASK) as u8 as char;
-                if character_to_output == char::from(0x0) {
+                character_to_output = (current_memory_value & EIGHT_BIT_MASK) as u8;
+                if character_to_output == 0 {
                     break;
                 }
-                print!("{}", character_to_output);
+                output_stream.write(&[character_to_output])?;
                 offset += 1;
-                character_to_output = ((current_memory_value >> 8) & EIGHT_BIT_MASK) as u8 as char;
+                character_to_output = ((current_memory_value >> 8) & EIGHT_BIT_MASK) as u8;
             }
         }
 
-        let Ok(_) = stdout().flush() else {
-            panic!("Error writing to standard output in trap OUT.");
-        };
+        output_stream.flush()
     }
 
     pub fn read_image_file(&mut self, file_path: &Path) -> bool {
@@ -707,6 +713,8 @@ impl<T> IndexMut<GeneralPurposeRegister> for [T] {
 
 #[cfg(test)]
 mod tests {
+    use std::io::IoSlice;
+
     use super::Flag::*;
     use super::*;
 
@@ -1457,7 +1465,17 @@ mod tests {
 
         vm.current_instruction = trap_puts_instruction;
 
-        vm.execute_trap_routine();
+        let mut buffer: Vec<u8> = Vec::new();
+
+        vm.puts(&mut buffer);
+
+        assert_eq!(buffer[0], 'T' as u8);
+        assert_eq!(buffer[1], 'e' as u8);
+        assert_eq!(buffer[2], 's' as u8);
+        assert_eq!(buffer[3], 't' as u8);
+        assert_eq!(buffer[4], '_' as u8);
+        assert_eq!(buffer[5], 'O' as u8);
+        assert_eq!(buffer[6], 'K' as u8);
     }
 
     #[test]
@@ -1477,62 +1495,69 @@ mod tests {
     fn out_outputs_char() {
         let mut vm = LC3VM::new();
 
-        let trap_out_instruction = OpCode::OpTRAP as u16 | TrapOUT as u16;
+        let mut buffer: Vec<u8> = Vec::new();
 
         vm.general_registers[R0] = 'T' as u16;
 
-        vm.current_instruction = trap_out_instruction;
-
-        vm.execute_trap_routine();
+        vm.out(&mut buffer);
 
         vm.general_registers[R0] = 'e' as u16;
 
-        vm.execute_trap_routine();
+        vm.out(&mut buffer);
 
         vm.general_registers[R0] = 's' as u16;
 
-        vm.execute_trap_routine();
+        vm.out(&mut buffer);
 
         vm.general_registers[R0] = 't' as u16;
 
-        vm.execute_trap_routine();
+        vm.out(&mut buffer);
 
         vm.general_registers[R0] = '_' as u16;
 
-        vm.execute_trap_routine();
+        vm.out(&mut buffer);
 
         vm.general_registers[R0] = 'O' as u16;
 
-        vm.execute_trap_routine();
+        vm.out(&mut buffer);
 
         vm.general_registers[R0] = 'K' as u16;
 
-        vm.current_instruction = trap_out_instruction;
+        vm.out(&mut buffer);
 
-        vm.execute_trap_routine();
+        assert_eq!(buffer[0], 'T' as u8);
+        assert_eq!(buffer[1], 'e' as u8);
+        assert_eq!(buffer[2], 's' as u8);
+        assert_eq!(buffer[3], 't' as u8);
+        assert_eq!(buffer[4], '_' as u8);
+        assert_eq!(buffer[5], 'O' as u8);
+        assert_eq!(buffer[6], 'K' as u8);
     }
 
-    /*#[test]
+    #[test]
     fn in_works_correctly() {
         let mut vm = LC3VM::new();
 
-        let trap_in_instruction = OpCode::OpTRAP as u16 | TrapIN as u16;
+        let mut output_buffer: Vec<u8> = Vec::new();
 
-        vm.execute_trap_routine();
+        let input_buffer = ['R' as u8];
+
+        vm.trap_in(&mut output_buffer, &mut &input_buffer[0..1]);
 
         assert_eq!(vm.general_registers[R0], 'R' as u16);
+        assert_eq!(output_buffer[0], 'R' as u8);
     }
 
     #[test]
     fn get_character_works_correctly() {
         let mut vm = LC3VM::new();
 
-        let trap_in_instruction = OpCode::OpTRAP as u16 | TrapGETC as u16;
+        let buffer = ['R' as u8];
 
-        vm.execute_trap_routine();
+        vm.get_character(&mut &buffer[0..1]);
 
-        assert_eq!(vm.general_registers[R0], 'R' as u16);
-    } */
+        assert_eq!(vm.general_registers[R0], ('R' as u8).into());
+    }
 
     #[test]
     fn putsp_displays_string_correctly() {
@@ -1544,11 +1569,17 @@ mod tests {
         vm.memory[42] = '_' as u16 | (('O' as u16) << 8);
         vm.memory[43] = 'K' as u16;
 
-        let trap_putsp_instruction = OpCode::OpTRAP as u16 | TrapPUTSP as u16;
+        let mut buffer: Vec<u8> = Vec::new();
 
-        vm.current_instruction = trap_putsp_instruction;
+        vm.output_char8(&mut buffer);
 
-        vm.execute_trap_routine();
+        assert_eq!(buffer[0], 'T' as u8);
+        assert_eq!(buffer[1], 'e' as u8);
+        assert_eq!(buffer[2], 's' as u8);
+        assert_eq!(buffer[3], 't' as u8);
+        assert_eq!(buffer[4], '_' as u8);
+        assert_eq!(buffer[5], 'O' as u8);
+        assert_eq!(buffer[6], 'K' as u8);
     }
 
     #[test]
